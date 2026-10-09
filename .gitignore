@@ -2,6 +2,6 @@
 results/
 __pycache__/
 *.pyc
-.env
+/etc/secrets/*
+!/etc/secrets/.env.example
 .venv/
-

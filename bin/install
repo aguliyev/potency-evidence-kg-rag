@@ -14,9 +14,10 @@ if ! docker compose version >/dev/null 2>&1; then
     exit 1
 fi
 
-if [[ ! -f .env ]]; then
-    cp .env.example .env
-    echo "Created .env from .env.example. You can edit local ports and credentials there."
+mkdir -p etc/secrets
+if [[ ! -f etc/secrets/.env ]]; then
+    cp etc/secrets/.env.example etc/secrets/.env
+    echo "Created etc/secrets/.env from its example. Edit it with your local credentials."
 fi
 
-docker compose build
+docker compose --env-file etc/.env --env-file etc/secrets/.env build
