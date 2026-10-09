@@ -20,4 +20,4 @@ if [[ ! -f etc/secrets/.env ]]; then
     echo "Created etc/secrets/.env from its example. Edit it with your local credentials."
 fi
 
-docker compose --env-file etc/.env --env-file etc/secrets/.env build
+docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env build

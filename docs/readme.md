@@ -2,6 +2,8 @@
 
 This optional local stack runs JupyterLab with PostgreSQL 17, pgvector, and Apache AGE. Docker Compose builds the database and Python images, starts PostgreSQL, applies pending Alembic migrations, and then starts JupyterLab. The database health check gates migrations, and successful migrations gate the notebook service.
 
+Dockerfiles and the Compose definition are under `docker/`.
+
 ## Setup
 
 Docker and its Compose plugin must already be installed. Run:
@@ -16,7 +18,7 @@ bin/start
 You can also start Compose directly after `bin/install`:
 
 ```bash
-docker compose --env-file etc/.env --env-file etc/secrets/.env up --build --detach
+docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env up --build --detach
 ```
 
 To stop the containers while keeping database data, run `bin/stop`. Run `bin/migrate` to apply migrations on demand. The named `postgres_data` volume is preserved by `bin/stop`.

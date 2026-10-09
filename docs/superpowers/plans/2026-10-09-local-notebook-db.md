@@ -14,7 +14,7 @@
 
 - PostgreSQL 17 is the initial compatibility target.
 - Pin both PostgreSQL extension versions.
-- `docker compose up` and `bin/start` must run migrations before JupyterLab.
+- `docker compose -f docker/compose.yaml up` and `bin/start` must run migrations before JupyterLab.
 - `bin/install` must not install host packages or Docker.
 - `bin/stop` must preserve the named database volume.
 - Notebook code and notebooks remain editable on the host through `lib/` and `notebooks/` mounts.
@@ -25,10 +25,10 @@
 ### Task 1: Build images and define Compose lifecycle
 
 **Files:**
-- Create: `Dockerfile.db`
-- Create: `Dockerfile.notebook`
+- Create: `docker/Dockerfile.db`
+- Create: `docker/Dockerfile.notebook`
 - Create: `requirements.txt`
-- Create: `compose.yaml`
+- Create: `docker/compose.yaml`
 - Create: `.env.example`
 - Create: `.dockerignore`
 - Create: `.gitignore` (only if absent; preserve existing ignore rules if present)
