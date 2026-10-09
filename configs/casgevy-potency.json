@@ -1,0 +1,30 @@
+{
+  "scope": {
+    "tenant_id": "public-fda",
+    "project_id": "casgevy-potency"
+  },
+  "corpus_manifest": "../corpus/manifest.json",
+  "source_records": "../corpus/records.jsonl",
+  "graph_schema": "../schema/graph-core.json",
+  "output_contract": "../schema/output-contract.json",
+  "questions": "../questions.json",
+  "corpus_snapshot": "potency-assignment-2026-09-21-v3",
+  "case": {
+    "product_id": "casgevy",
+    "product_name": "CASGEVY",
+    "proper_name": "exagamglogene autotemcel",
+    "configured_indication": "transfusion-dependent beta-thalassemia",
+    "configured_application_id": "STN 125785",
+    "related_application_id": "STN 125787",
+    "related_indication": "sickle cell disease",
+    "scope_note": "Model the shared exa-cel potency strategy across both indications while preserving application- and indication-specific evidence."
+  },
+  "model_endpoint": null,
+  "embedding_model": null,
+  "generation_model": null,
+  "model_budget": null,
+  "note": "Model access is supplied and both embedding/generation verified before timed work. The completed model-access file is authoritative for access settings; mirror the model fields here for reproducibility. Keep credentials in the agreed secret channel/environment, never in this package.",
+  "model_access_file": "model-access.template.json",
+  "package_edition": "2026-09-21-potency-rag-v2",
+  "behavior_cases": "../fixtures/behavior-cases.json"
+}

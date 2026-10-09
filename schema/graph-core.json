@@ -1,0 +1,64 @@
+{
+  "id": "deffai-potency-evidence-graph-core",
+  "version": "2026-09-21-potency-rag-v2",
+  "note": "Use the supplied graph core as a reference, not a fixed ontology. You may modify, merge, or replace its node and relationship types; document consequential choices and map your representation to the required evidence provenance, tenant/project isolation, source-version identity, assertion state, and human-review state. Equivalent representations are acceptable. Every source must still have an inspectable document representation, even if you rename SourceDocument. Do not treat the listed type names as a checklist.",
+  "node_types": [
+    "SourceDocument",
+    "SourcePassage",
+    "Product",
+    "Application",
+    "Indication",
+    "PotencyStrategy",
+    "Assay",
+    "MeasuredAttribute",
+    "RegulatoryInteraction",
+    "ReviewConclusion",
+    "Assertion"
+  ],
+  "edge_types": [
+    "contains_passage",
+    "supported_by",
+    "applies_to",
+    "measures",
+    "used_as",
+    "proposed_in",
+    "requested_in",
+    "revised_by",
+    "concluded_in",
+    "cites",
+    "supersedes_or_supplements"
+  ],
+  "assertion_states": [
+    "reported",
+    "proposed",
+    "requested",
+    "revised",
+    "accepted",
+    "rejected",
+    "unresolved",
+    "redacted"
+  ],
+  "assay_roles": [
+    "potency",
+    "identity",
+    "release",
+    "characterization",
+    "stability",
+    "supporting"
+  ],
+  "review_states": [
+    "unreviewed",
+    "reviewed"
+  ],
+  "identity_rule": "Graph IDs must be stable and include or derive from tenant/project scope. Source/passage local IDs alone are not global identities.",
+  "provenance_rule": "Every evidence-bearing assertion and edge must identify one or more configured source passages and retain extraction provenance. Structural or system-generated relationships may have empty source references but must use documented system provenance and remain distinguishable from evidence-bearing relationships.",
+  "notes": [
+    "Document authority/status and assertion authority/status are separate. Preserve historical proposals and later conclusions.",
+    "The supplied subject_scope is document-level case metadata, not proof every passage applies to that indication.",
+    "Redacted placeholders must remain scoped to the source passage unless an explicit passage establishes identity.",
+    "Assay roles may be encoded as edge attributes or explicit role nodes; used_as must have a defined target/role representation. Document the mapping.",
+    "Automatically extracted assertions and relationships default to unreviewed. A model call or automated validation is not human review. Keep this independent of the regulatory state reported in the source: an accepted proposal or a reviewer conclusion may still be an unreviewed extraction. Human review and correction are production-design topics only; no working review operation or UI is required. Explain who can review/correct an extraction, what provenance is retained, and how an approved correction would reach indexes and later answers.",
+    "Preserve inspectable old source records, assertions/graph exports, and the answers and traces generated before an update, connected by source, snapshot, index and run identifiers. Files are sufficient. No old-version or as-of retrieval/generation interface is required. Current source versions may still describe historical proposals: source revision state and the chronology described by a source are separate.",
+    "Source replacement and disagreement between independent sources are different relationships. Preserve both conflicting assertions and their source references when no supported resolution exists. You may add relation/attribute types as needed."
+  ]
+}

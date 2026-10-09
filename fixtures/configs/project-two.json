@@ -1,0 +1,8 @@
+{
+  "scope": {"tenant_id": "fixture-tenant", "project_id": "project-two"},
+  "source_records": "../inputs/project-two.jsonl",
+  "graph_schema": "../../schema/graph-core.json",
+  "output_contract": "../../schema/output-contract.json",
+  "questions": "../../questions.json",
+  "corpus_snapshot": "isolation-fixture-v1"
+}

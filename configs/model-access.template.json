@@ -1,0 +1,96 @@
+{
+  "package_edition": "2026-09-21-potency-rag-v2",
+  "setup_status": "not_configured",
+  "access_mode": null,
+  "embedding": {
+    "provider": null,
+    "endpoint_or_local_command": null,
+    "api_style_and_version": null,
+    "model_id_and_version": null,
+    "dimensions": null,
+    "auth_scheme": null,
+    "credential_env_var": null,
+    "max_input_tokens": null,
+    "max_batch_size": null,
+    "requests_per_minute": null,
+    "tokens_per_minute": null,
+    "max_concurrent_requests": null,
+    "timeout_seconds": null,
+    "sanitized_smoke_request_instructions": null
+  },
+  "generation": {
+    "provider": null,
+    "endpoint_or_local_command": null,
+    "api_style_and_version": null,
+    "model_id_and_version": null,
+    "auth_scheme": null,
+    "credential_env_var": null,
+    "context_window_tokens": null,
+    "max_output_tokens": null,
+    "requests_per_minute": null,
+    "tokens_per_minute": null,
+    "max_concurrent_requests": null,
+    "timeout_seconds": null,
+    "structured_output": null,
+    "usage_reporting": null,
+    "sanitized_smoke_request_instructions": null
+  },
+  "credentials": {
+    "secure_delivery_method": null,
+    "scope_and_expiry": null,
+    "note": "Record delivery instructions and environment-variable names only; never store a credential value here."
+  },
+  "budget": {
+    "currency": "USD",
+    "candidate_total_limit": null,
+    "token_or_service_sub_limits": null,
+    "included_usage": [
+      "embedding",
+      "extraction",
+      "generation",
+      "evaluation",
+      "retries"
+    ],
+    "usage_visibility": null,
+    "expiry_or_reset": null,
+    "near_limit_and_exhaustion_procedure": null,
+    "personal_top_up_required": false
+  },
+  "api_constraints": {
+    "region_or_project": null,
+    "retry_and_backoff_guidance": null,
+    "network_or_allowlist_requirements": null,
+    "other_constraints": null
+  },
+  "local_alternative": {
+    "approval_status": "pending",
+    "embedding_model_and_version": null,
+    "generation_model_version_quantization": null,
+    "license_and_download_source": null,
+    "hardware_requirements_and_provider": null,
+    "startup_instructions": null,
+    "fallback_if_unavailable": null
+  },
+  "support": {
+    "primary_name": null,
+    "primary_channel": null,
+    "backup_name_and_channel": null,
+    "response_window": null
+  },
+  "readiness": {
+    "complete_materials_confirmed": false,
+    "paid_terms_confirmed": false,
+    "embedding_verified_at": null,
+    "generation_verified_at": null,
+    "candidate_acknowledged_constraints": false,
+    "active_work_start_at": null,
+    "submission_deadline": null
+  },
+  "notes": [
+    "Team completes this access sheet before the timed exercise. Unset does not mean unlimited or supported.",
+    "For a documented non-applicable/no-limit field use an explicit explanation; do not invent a number.",
+    "Allowed structured_output descriptions: json_schema, json_mode, none. All are acceptable when documented.",
+    "The original flat model fields in casgevy-potency.json may mirror these settings; this completed sheet is the access authority when services differ.",
+    "The local alternative must be approved and verified before switching; if unavailable, document the hosted recovery plan."
+  ]
+}

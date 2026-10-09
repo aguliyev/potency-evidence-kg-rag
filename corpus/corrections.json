@@ -1,0 +1,23 @@
+{
+  "id": "potency-normalization-errata",
+  "from_snapshot": "potency-assignment-2026-09-21-v2",
+  "to_snapshot": "potency-assignment-2026-09-21-v3",
+  "raw_sources_changed": false,
+  "corrected_passage_count": 1,
+  "other_passage_texts_unchanged": 790,
+  "entries": [
+    {
+      "passage_id": "casgevy-125787-scd-approval-letter:page-0002",
+      "source_id": "casgevy-125787-scd-approval-letter",
+      "source_version": "2023-12-08:bff184adda8256c4",
+      "filename": "corpus/raw/casgevy-125787/CASGEVY-125787-SCD-Approval-Letter.pdf",
+      "page": 2,
+      "kind": "heading_reading_order",
+      "description": "FDA LOT RELEASE appeared inside the preceding dating-period sentence in the supplied normalized text. Re-extracted this physical page with pdftotext -layout; the heading now precedes its own paragraph, as visually verified in the raw PDF.",
+      "previous_text_sha256": "7327cee5c726d2295bef7ee51648cbc2aab2cfcc98a3e0510b0140dc8f7a7593",
+      "corrected_text_sha256": "bea8f5ebe10211747fa6c729452fc02022ed56d4c850136eb786d61da5579e1a",
+      "word_multiset_unchanged": true,
+      "regulatory_interpretation_added": false
+    }
+  ]
+}

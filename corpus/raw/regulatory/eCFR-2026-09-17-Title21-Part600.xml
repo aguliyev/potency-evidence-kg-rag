@@ -1,0 +1,516 @@
+<?xml version="1.0"?>
+<DIV5 N="600" TYPE="PART" VOLUME="7" hierarchy_metadata="{&amp;quot;path&amp;quot;:&amp;quot;/on/_SUBSTITUTE_DATE_/title-21/part-600&amp;quot;,&amp;quot;citation&amp;quot;:&amp;quot;21 CFR Part 600&amp;quot;}">
+<HEAD>PART 600&#x2014;BIOLOGICAL PRODUCTS: GENERAL
+</HEAD>
+<AUTH>
+<HED>Authority:</HED><PSPACE>21 U.S.C. 321, 351, 352, 353, 355, 356c, 356e, 360, 360i, 371, 374, 379k-l; 42 U.S.C. 216, 262, 263, 263a, 264.
+</PSPACE></AUTH>
+<CROSSREF>
+<HED>Cross References:</HED>
+<P>For U.S. Customs Service regulations relating to viruses, serums, and toxins, see 19 CFR 12.21-12.23. For U.S. Postal Service regulations relating to the admissibility to the United States mails see parts 124 and 125 of the Domestic Mail Manual, that is incorporated by reference in 39 CFR part 111.</P></CROSSREF>
+<DIV6 N="A" TYPE="SUBPART" VOLUME="7" hierarchy_metadata="{&amp;quot;path&amp;quot;:&amp;quot;/on/_SUBSTITUTE_DATE_/title-21/part-600/subpart-A&amp;quot;,&amp;quot;citation&amp;quot;:&amp;quot;21 CFR Part 600 Subpart A&amp;quot;}">
+<HEAD>Subpart A&#x2014;General Provisions</HEAD>
+<DIV8 N="600.2" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.2&quot;,&quot;citation&quot;:&quot;21 CFR 600.2&quot;}">
+<HEAD>&#xA7; 600.2 Mailing addresses.</HEAD>
+<P>(a) <I>Licensed biological products regulated by the Center for Biologics Evaluation and Research (CBER).</I> Unless otherwise stated in paragraph (c) of this section, or as otherwise prescribed by FDA regulation, all submissions to CBER referenced in parts 600 through 680 of this chapter, as applicable, must be sent to: Food and Drug Administration, Center for Biologics Evaluation and Research, Document Control Center, 10903 New Hampshire Ave., Bldg. 71, Rm. G112, Silver Spring, MD 20993-0002. Examples of such submissions include: Biologics license applications (BLAs) and their amendments and supplements, biological product deviation reports, fatality reports, and other correspondence. Biological products samples must not be sent to this address but must be sent to the address in paragraph (c) of this section.</P>
+<P>(b) <I>Licensed biological products regulated by the Center for Drug Evaluation and Research (CDER).</I> Unless otherwise stated in paragraphs (b)(1), (b)(2), or (c) of this section, or as otherwise prescribed by FDA regulation, all submissions to CDER referenced in parts 600, 601, and 610 of this chapter, as applicable, must be sent to: CDER Central Document Room, Center for Drug Evaluation and Research, Food and Drug Administration, 5901B Ammendale Rd., Beltsville, MD 20705. Examples of such submissions include: BLAs and their amendments and supplements, and other correspondence.</P>
+<P>(1) <I>Biological Product Deviation Reporting (CDER).</I> All biological product deviation reports required under &#xA7; 600.14 must be sent to: Division of Compliance Risk Management and Surveillance, Office of Compliance, Center for Drug Evaluation and Research, Food and Drug Administration, 10903 New Hampshire Ave., Silver Spring, MD 20993-0002.</P>
+<P>(2) <I>Advertising and Promotional Labeling (CDER).</I> All advertising and promotional labeling supplements required under &#xA7; 601.12(f) of this chapter must be sent to: Division of Drug Marketing, Advertising and Communication, Center for Drug Evaluation and Research, Food and Drug Administration, 5901-B Ammendale Rd., Beltsville, MD 20705-1266.</P>
+<P>(c) <I>Samples and Protocols for licensed biological products regulated by CBER or CDER.</I> (1) Biological product samples and/or protocols, other than radioactive biological product samples and protocols, required under &#xA7;&#xA7; 600.13, 600.22, 601.15, 610.2, 660.6, 660.36, or 660.46 of this chapter must be sent by courier service to: Food and Drug Administration, Center for Biologics Evaluation and Research, ATTN: Sample Custodian, 10903 New Hampshire Ave., Bldg. 75, Rm. G707, Silver Spring, MD 20993-0002. The protocol(s) may be placed in the box used to ship the samples to CBER. A cover letter should not be included when submitting the protocol with the sample unless it contains pertinent information affecting the release of the lot.</P>
+<P>(2) Radioactive biological products required under &#xA7; 610.2 of this chapter must be sent by courier service to: Food and Drug Administration, Center for Biologics Evaluation and Research, ATTN: Sample Custodian, c/o White Oak Radiation Safety Program, 10903 New Hampshire Ave., Bldg. 52-72, Rm. G406A, Silver Spring, MD 20993-0002.</P>
+<P>(d) Address information for submissions to CBER and CDER other than those listed in parts 600 through 680 of this chapter are included directly in the applicable regulations.</P>
+<P>(e) Obtain updated mailing address information for biological products regulated by CBER at <I>http://www.fda.gov/BiologicsBloodVaccines/default.htm</I>, or for biological products regulated by CDER at <I>http://www.fda.gov/Drugs/default.htm.</I></P>
+<CITA TYPE="N">[70 FR 14981, Mar. 24, 2005, as amended at 74 FR 13114, Mar. 26, 2009; 78 FR 19585, Apr. 2, 2013; 80 FR 18091, Apr. 3, 2015; 79 FR 33090, June 10, 2014]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.3" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.3&quot;,&quot;citation&quot;:&quot;21 CFR 600.3&quot;}">
+<HEAD>&#xA7; 600.3 Definitions.</HEAD>
+<P>As used in this subchapter:</P>
+<P>(a) <I>Act</I> means the Public Health Service Act (58 Stat. 682), approved July 1, 1944.</P>
+<P>(b) <I>Secretary</I> means the Secretary of Health and Human Services and any other officer or employee of the Department of Health and Human Services to whom the authority involved has been delegated.</P>
+<P>(c) <I>Commissioner of Food and Drugs</I> means the Commissioner of the Food and Drug Administration.</P>
+<P>(d) <I>Center for Biologics Evaluation and Research</I> means Center for Biologics Evaluation and Research of the Food and Drug Administration.</P>
+<P>(e) <I>State</I> means a State or the District of Columbia, Puerto Rico, or the Virgin Islands.</P>
+<P>(f) <I>Possession</I> includes among other possessions, Puerto Rico and the Virgin Islands.</P>
+<P>(g) <I>Products</I> includes biological products and trivalent organic arsenicals.</P>
+<P>(h) <I>Biological product</I> means a virus, therapeutic serum, toxin, antitoxin, vaccine, blood, blood component or derivative, allergenic product, protein, or analogous product, or arsphenamine or derivative of arsphenamine (or any other trivalent organic arsenic compound), applicable to the prevention, treatment, or cure of a disease or condition of human beings.</P>
+<P>(1) A virus is interpreted to be a product containing the minute living cause of an infectious disease and includes but is not limited to filterable viruses, bacteria, rickettsia, fungi, and protozoa.</P>
+<P>(2) A therapeutic serum is a product obtained from blood by removing the clot or clot components and the blood cells.</P>
+<P>(3) A toxin is a product containing a soluble substance poisonous to laboratory animals or to man in doses of 1 milliliter or less (or equivalent in weight) of the product, and having the property, following the injection of non-fatal doses into an animal, of causing to be produced therein another soluble substance which specifically neutralizes the poisonous substance and which is demonstrable in the serum of the animal thus immunized.</P>
+<P>(4) An antitoxin is a product containing the soluble substance in serum or other body fluid of an immunized animal which specifically neutralizes the toxin against which the animal is immune.</P>
+<P>(5) A product is analogous:</P>
+<P>(i) To a virus if prepared from or with a virus or agent actually or potentially infectious, without regard to the degree of virulence or toxicogenicity of the specific strain used.</P>
+<P>(ii) To a therapeutic serum, if composed of whole blood or plasma or containing some organic constituent or product other than a hormone or an amino acid, derived from whole blood, plasma, or serum.</P>
+<P>(iii) To a toxin or antitoxin, if intended, irrespective of its source of origin, to be applicable to the prevention, treatment, or cure of disease or injuries of man through a specific immune process.</P>
+<P>(6) A protein is any alpha amino acid polymer with a specific, defined sequence that is greater than 40 amino acids in size. When two or more amino acid chains in an amino acid polymer are associated with each other in a manner that occurs in nature, the size of the amino acid polymer for purposes of this paragraph (h)(6) will be based on the total number of amino acids in those chains, and will not be limited to the number of amino acids in a contiguous sequence.</P>
+<P>(i) <I>Trivalent organic arsenicals</I> means arsphenamine and its derivatives (or any other trivalent organic arsenic compound) applicable to the prevention, treatment, or cure of diseases or injuries of man.</P>
+<P>(j) A product is deemed <I>applicable to the prevention, treatment, or cure of diseases or injuries of man</I> irrespective of the mode of administration or application recommended, including use when intended through administration or application to a person as an aid in diagnosis, or in evaluating the degree of susceptibility or immunity possessed by a person, and including also any other use for purposes of diagnosis if the diagnostic substance so used is prepared from or with the aid of a biological product.</P>
+<P>(k) <I>Proper name,</I> as applied to a product, means the name designated in the license for use upon each package of the product.</P>
+<P>(l) <I>Dating period</I> means the period beyond which the product cannot be expected beyond reasonable doubt to yield its specific results.</P>
+<P>(m) <I>Expiration date</I> means the calendar month and year, and where applicable, the day and hour, that the dating period ends.</P>
+<P>(n) The word <I>standards</I> means specifications and procedures applicable to an establishment or to the manufacture or release of products, which are prescribed in this subchapter or established in the biologics license application designed to insure the continued safety, purity, and potency of such products.</P>
+<P>(o) The word <I>continued</I> as applied to the safety, purity and potency of products is interpreted to apply to the dating period.</P>
+<P>(p) The word <I>safety</I> means the relative freedom from harmful effect to persons affected, directly or indirectly, by a product when prudently administered, taking into consideration the character of the product in relation to the condition of the recipient at the time.</P>
+<P>(q) The word <I>sterility</I> is interpreted to mean freedom from viable contaminating microorganisms, as determined by the tests conducted under &#xA7; 610.12 of this chapter.</P>
+<P>(r) <I>Purity</I> means relative freedom from extraneous matter in the finished product, whether or not harmful to the recipient or deleterious to the product. <I>Purity</I> includes but is not limited to relative freedom from residual moisture or other volatile substances and pyrogenic substances.</P>
+<P>(s) The word <I>potency</I> is interpreted to mean the specific ability or capacity of the product, as indicated by appropriate laboratory tests or by adequately controlled clinical data obtained through the administration of the product in the manner intended, to effect a given result.</P>
+<P>(t) <I>Manufacturer</I> means any legal person or entity engaged in the manufacture of a product subject to license under the act; &#x201C;Manufacturer&#x201D; also includes any legal person or entity who is an applicant for a license where the applicant assumes responsibility for compliance with the applicable product and establishment standards.</P>
+<P>(u) <I>Manufacture</I> means all steps in propagation or manufacture and preparation of products and includes but is not limited to filling, testing, labeling, packaging, and storage by the manufacturer.</P>
+<P>(v) <I>Location</I> includes all buildings, appurtenances, equipment and animals used, and personnel engaged by a manufacturer within a particular area designated by an address adequate for identification.</P>
+<P>(w) <I>Establishment</I> has the same meaning as &#x201C;facility&#x201D; in section 351 of the Public Health Service Act and includes all locations.</P>
+<P>(x) <I>Lot</I> means that quantity of uniform material identified by the manufacturer as having been thoroughly mixed in a single vessel.</P>
+<P>(y) A <I>filling</I> refers to a group of final containers identical in all respects, which have been filled with the same product from the same bulk lot without any change that will affect the integrity of the filling assembly.</P>
+<P>(z) <I>Process</I> refers to a manufacturing step that is performed on the product itself which may affect its safety, purity or potency, in contrast to such manufacturing steps which do not affect intrinsically the safety, purity or potency of the product.</P>
+<P>(aa) <I>Selling agent</I> or <I>distributor</I> means any person engaged in the unrestricted distribution, other than by sale at retail, of products subject to license.</P>
+<P>(bb) <I>Container</I> (referred to also as &#x201C;final container&#x201D;) is the immediate unit, bottle, vial, ampule, tube, or other receptacle containing the product as distributed for sale, barter, or exchange.</P>
+<P>(cc) <I>Package</I> means the immediate carton, receptacle, or wrapper, including all labeling matter therein and thereon, and the contents of the one or more enclosed containers. If no package, as defined in the preceding sentence, is used, the container shall be deemed to be the package.</P>
+<P>(dd) <I>Label</I> means any written, printed, or graphic matter on the container or package or any such matter clearly visible through the immediate carton, receptacle, or wrapper.</P>
+<P>(ee) <I>Radioactive biological product</I> means a biological product which is labeled with a radionuclide or intended solely to be labeled with a radionuclide.</P>
+<P>(ff) <I>Amendment</I> is the submission of information to a pending license application or supplement, to revise or modify the application as originally submitted.</P>
+<P>(gg) <I>Supplement</I> is a request to approve a change in an approved license application.</P>
+<P>(hh) <I>Distributed</I> means the biological product has left the control of the licensed manufacturer.</P>
+<P>(ii) <I>Control</I> means having responsibility for maintaining the continued safety, purity, and potency of the product and for compliance with applicable product and establishment standards, and for compliance with current good manufacturing practices.</P>
+<P>(jj) <I>Assess the effects of the change</I>, as used in &#xA7; 601.12 of this chapter, means to evaluate the effects of a manufacturing change on the identity, strength, quality, purity, and potency of a product as these factors may relate to the safety or effectiveness of the product.</P>
+<P>(kk) <I>Specification</I>, as used in &#xA7; 601.12 of this chapter, means the quality standard (i.e., tests, analytical procedures, and acceptance criteria) provided in an approved application to confirm the quality of products, intermediates, raw materials, reagents, components, in-process materials, container closure systems, and other materials used in the production of a product. For the purpose of this definition, <I>acceptance criteria</I> means numerical limits, ranges, or other criteria for the tests described.</P>
+<P>(ll) <I>Complete response letter</I> means a written communication to an applicant from FDA usually describing all of the deficiencies that the agency has identified in a biologics license application or supplement that must be satisfactorily addressed before it can be approved.</P>
+<P>(mm) <I>Resubmission</I> means a submission by the biologics license applicant or supplement applicant of all materials needed to fully address all deficiencies identified in the complete response letter. A biologics license application or supplement for which FDA issued a complete response letter, but which was withdrawn before approval and later submitted again, is not a resubmission.</P>
+<CITA TYPE="N">[38 FR 32048, Nov. 20, 1973, as amended at 40 FR 31313, July 25, 1975; 55 FR 11014, Mar. 26, 1990; 61 FR 24232, May 14, 1996; 62 FR 39901, July 24, 1997; 64 FR 56449, Oct. 20, 1999; 65 FR 66634, Nov. 7, 2000; 69 FR 18766, Apr. 8, 2004; 70 FR 14982, Mar. 24, 2005; 73 FR 39610, July 10, 2008; 77 FR 26174, May 3, 2012; 85 FR 10063, Feb. 21, 2020]
+</CITA>
+</DIV8>
+
+</DIV6>
+<DIV6 N="B" TYPE="SUBPART" VOLUME="7" hierarchy_metadata="{&amp;quot;path&amp;quot;:&amp;quot;/on/_SUBSTITUTE_DATE_/title-21/part-600/subpart-B&amp;quot;,&amp;quot;citation&amp;quot;:&amp;quot;21 CFR Part 600 Subpart B&amp;quot;}">
+<HEAD>Subpart B&#x2014;Establishment Standards</HEAD>
+<DIV8 N="600.10" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.10&quot;,&quot;citation&quot;:&quot;21 CFR 600.10&quot;}">
+<HEAD>&#xA7; 600.10 Personnel.</HEAD>
+<P>(a) [Reserved]</P>
+<P>(b) <I>Personnel.</I> Personnel shall have capabilities commensurate with their assigned functions, a thorough understanding of the manufacturing operations which they perform, the necessary training and experience relating to individual products, and adequate information concerning the application of the pertinent provisions of this subchapter to their respective functions. Personnel shall include such professionally trained persons as are necessary to insure the competent performance of all manufacturing processes.</P>
+<P>(c) <I>Restrictions on personnel</I>&#x2014;(1) <I>Specific duties.</I> Persons whose presence can affect adversely the safety and purity of a product shall be excluded from the room where the manufacture of a product is in progress.</P>
+<P>(2) <I>Sterile operations.</I> Personnel performing sterile operations shall wear clean or sterilized protective clothing and devices to the extent necessary to protect the product from contamination.</P>
+<P>(3) <I>Pathogenic viruses and spore-forming organisms.</I> Persons working with viruses pathogenic for man or with spore-forming microorganisms, and persons engaged in the care of animals or animal quarters, shall be excluded from areas where other products are manufactured, or such persons shall change outer clothing, including shoes, or wear protective covering prior to entering such areas.</P>
+<P>(4) <I>Live vaccine work areas.</I> Persons may not enter a live vaccine processing area after having worked with other infectious agents in any other laboratory during the same working day. Only persons actually concerned with propagation of the culture, production of the vaccine, and unit maintenance, shall be allowed in live vaccine processing areas when active work is in progress. Casual visitors shall be excluded from such units at all times and all others having business in such areas shall be admitted only under supervision. Street clothing, including shoes, shall be replaced or covered by suitable laboratory clothing before entering a live vaccine processing unit. Persons caring for animals used in the manufacture of live vaccines shall be excluded from other animal quarters and from contact with other animals during the same working day.</P>
+<CITA TYPE="N">[38 FR 32048, Nov. 20, 1973, as amended at 49 FR 23833, June 8, 1984; 55 FR 11014, Mar. 26, 1990; 62 FR 53538, Oct. 15, 1997; 68 FR 75119, Dec. 30, 2003]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.11" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.11&quot;,&quot;citation&quot;:&quot;21 CFR 600.11&quot;}">
+<HEAD>&#xA7; 600.11 Physical establishment, equipment, animals, and care.</HEAD>
+<P>(a) <I>Work areas.</I> All rooms and work areas where products are manufactured or stored shall be kept orderly, clean, and free of dirt, dust, vermin and objects not required for manufacturing. Precautions shall be taken to avoid clogging and back-siphonage of drainage systems. Precautions shall be taken to exclude extraneous infectious agents from manufacturing areas. Work rooms shall be well lighted and ventilated. The ventilation system shall be arranged so as to prevent the dissemination of microorganisms from one manufacturing area to another and to avoid other conditions unfavorable to the safety of the product. Filling rooms, and other rooms where open, sterile operations are conducted, shall be adequate to meet manufacturing needs and such rooms shall be constructed and equipped to permit thorough cleaning and to keep air-borne contaminants at a minimum. If such rooms are used for other purposes, they shall be cleaned and prepared prior to use for sterile operations. Refrigerators, incubators and warm rooms shall be maintained at temperatures within applicable ranges and shall be free of extraneous material which might affect the safety of the product.</P>
+<P>(b) <I>Equipment.</I> Apparatus for sterilizing equipment and the method of operation shall be such as to insure the destruction of contaminating microorganisms. The effectiveness of the sterilization procedure shall be no less than that achieved by an attained temperature of 121.5 &#xB0;C maintained for 20 minutes by saturated steam or by an attained temperature of 170 &#xB0;C maintained for 2 hours with dry heat. Processing and storage containers, filters, filling apparatus, and other pieces of apparatus and accessory equipment, including pipes and tubing, shall be designed and constructed to permit thorough cleaning and, where possible, inspection for cleanliness. All surfaces that come in contact with products shall be clean and free of surface solids, leachable contaminants, and other materials that will hasten the deterioration of the product or otherwise render it less suitable for the intended use. For products for which sterility is a factor, equipment shall be sterile, unless sterility of the product is assured by subsequent procedures.</P>
+<P>(c) <I>Laboratory and bleeding rooms.</I> Rooms used for the processing of products, including bleeding rooms, shall be effectively fly-proofed and kept free of flies and vermin. Such rooms shall be so constructed as to insure freedom from dust, smoke and other deleterious substances and to permit thorough cleaning and disinfection. Rooms for animal injection and bleeding, and rooms for smallpox vaccine animals, shall be disinfected and be provided with the necessary water, electrical and other services.</P>
+<P>(d) <I>Animal quarters and stables.</I> Animal quarters, stables and food storage areas shall be of appropriate construction, fly-proofed, adequately lighted and ventilated, and maintained in a clean, vermin-free and sanitary condition. No manure or refuse shall be stored as to permit the breeding of flies on the premises, nor shall the establishment be located in close proximity to off-property manure or refuse storage capable of engendering fly breeding.</P>
+<P>(e) <I>Restrictions on building and equipment use</I>&#x2014;(1) <I>Work of a diagnostic nature.</I> Laboratory procedures of a clinical diagnostic nature involving materials that may be contaminated, shall not be performed in space used for the manufacture of products except that manufacturing space which is used only occasionally may be used for diagnostic work provided spore-forming pathogenic microorganisms are not involved and provided the space is thoroughly cleaned and disinfected before the manufacture of products is resumed.</P>
+<P>(2) <I>Spore-forming organisms for supplemental sterilization procedure control test.</I> Spore-forming organisms used as an additional control in sterilization procedures may be introduced into areas used for the manufacture of products, only for the purposes of the test and only immediately before use for such purposes: <I>Provided,</I> That (i) the organism is not pathogenic for man or animals and does not produce pyrogens or toxins, (ii) the culture is demonstrated to be pure, (iii) transfer of test cultures to culture media shall be limited to the sterility test area or areas designated for work with spore-forming organisms, (iv) each culture be labeled with the name of the microorganism and the statement &#x201C;Caution: microbial spores. See directions for storage, use and disposition.&#x201D;, and (v) the container of each culture is designed to withstand handling without breaking.</P>
+<P>(3) <I>Work with spore-forming microorganisms.</I> (i) Manufacturing processes using spore-forming microorganisms conducted in a multiproduct manufacturing site must be performed under appropriate controls to prevent contamination of other products and areas within the site. Prevention of spore contamination can be achieved by using a separate dedicated building or by using process containment if manufacturing is conducted in a multiproduct manufacturing building. All product and personnel movement between the area where the spore-forming microorganisms are manufactured and other manufacturing areas must be conducted under conditions that will prevent the introduction of spores into other areas of the facility.</P>
+<P>(ii) If process containment is employed in a multiproduct manufacturing area, procedures must be in place to demonstrate adequate removal of the spore-forming microorganism(s) from the manufacturing area for subsequent manufacture of other products. These procedures must provide for adequate removal or decontamination of the spore-forming microorganisms on and within manufacturing equipment, facilities, and ancillary room items as well as the removal of disposable or product dedicated items from the manufacturing area. Environmental monitoring specific for the spore-forming microorganism(s) must be conducted in adjacent areas during manufacturing operations and in the manufacturing area after completion of cleaning and decontamination.</P>
+<P>(4) <I>Live vaccine processing.</I> Live vaccine processing must be performed under appropriate controls to prevent cross contamination of other products and other manufacturing areas within the building. Appropriate controls must include, at a minimum:</P>
+<P>(i)(A) Using a dedicated manufacturing area that is either in a separate building, in a separate wing of a building, or in quarters at the blind end of a corridor and includes adequate space and equipment for all processing steps up to, but not including, filling into final containers; and</P>
+<P>(B) Not conducting test procedures that potentially involve the presence of microorganisms other than the vaccine strains or the use of tissue culture cell lines other than primary cultures in space used for processing live vaccine; or</P>
+<P>(ii) If manufacturing is conducted in a multiproduct manufacturing building or area, using procedural controls, and where necessary, process containment. Process containment is deemed to be necessary unless procedural controls are sufficient to prevent cross contamination of other products and other manufacturing areas within the building. Process containment is a system designed to mechanically isolate equipment or an area that involves manufacturing using live vaccine organisms. All product, equipment, and personnel movement between distinct live vaccine processing areas and between live vaccine processing areas and other manufacturing areas, up to, but not including, filling in final containers, must be conducted under conditions that will prevent cross contamination of other products and manufacturing areas within the building, including the introduction of live vaccine organisms into other areas. In addition, written procedures and effective processes must be in place to adequately remove or decontaminate live vaccine organisms from the manufacturing area and equipment for subsequent manufacture of other products. Written procedures must be in place for verification that processes to remove or decontaminate live vaccine organisms have been followed.</P>
+<P>(5) <I>Equipment and supplies&#x2014;contamination.</I> Equipment and supplies used in work on or otherwise exposed to any pathogenic or potentially pathogenic agent shall be kept separated from equipment and supplies used in the manufacture of products to the extent necessary to prevent cross-contamination.</P>
+<P>(f) <I>Animals used in manufacture</I>&#x2014;(1) <I>Care of animals used in manufacturing.</I> Caretakers and attendants for animals used for the manufacture of products shall be sufficient in number and have adequate experience to insure adequate care. Animal quarters and cages shall be kept in sanitary condition. Animals on production shall be inspected daily to observe response to production procedures. Animals that become ill for reasons not related to production shall be isolated from other animals and shall not be used for production until recovery is complete. Competent veterinary care shall be provided as needed.</P>
+<P>(2) <I>Quarantine of animals</I>&#x2014;(i) <I>General.</I> No animal shall be used in processing unless kept under competent daily inspection and preliminary quarantine for a period of at least 7 days before use, or as otherwise provided in this subchapter. Only healthy animals free from detectable communicable diseases shall be used. Animals must remain in overt good health throughout the quarantine periods and particular care shall be taken during the quarantine periods to reject animals of the equine genus which may be infected with glanders and animals which may be infected with tuberculosis.</P>
+<P>(ii) <I>Quarantine of monkeys.</I> In addition to observing the pertinent general quarantine requirements, monkeys used as a source of tissue in the manufacture of vaccine shall be maintained in quarantine for at least 6 weeks prior to use, except when otherwise provided in this part. Only monkeys that have reacted negatively to tuberculin at the start of the quarantine period and again within 2 weeks prior to use shall be used in the manufacture of vaccine. Due precaution shall be taken to prevent cross-infection from any infected or potentially infected monkeys on the premises. Monkeys to be used in the manufacture of a live vaccine shall be maintained throughout the quarantine period in cages closed on all sides with solid materials except the front which shall be screened, with no more than two monkeys housed in one cage. Cage mates shall not be interchanged.</P>
+<P>(3) <I>Immunization against tetanus.</I> Horses and other animals susceptible to tetanus, that are used in the processing steps of the manufacture of biological products, shall be treated adequately to maintain immunity to tetanus.</P>
+<P>(4) <I>Immunization and bleeding of animals used as a source of products.</I> Toxins or other nonviable antigens administered in the immunization of animals used in the manufacture of products shall be sterile. Viable antigens, when so used, shall be free of contaminants, as determined by appropriate tests prior to use. Injections shall not be made into horses within 6 inches of bleeding site. Horses shall not be bled for manufacturing purposes while showing persistent general reaction or local reaction near the site of bleeding. Blood shall not be used if it was drawn within 5 days of injecting the animals with viable microorganisms. Animals shall not be bled for manufacturing purposes when they have an intercurrent disease. Blood intended for use as a source of a biological product shall be collected in clean, sterile vessels. When the product is intended for use by injection, such vessels shall also be pyrogen-free.</P>
+<P>(5) [Reserved]</P>
+<P>(6) <I>Reporting of certain diseases.</I> In cases of actual or suspected infection with foot and mouth disease, glanders, tetanus, anthrax, gas gangrene, equine infectious anemia; equine encephalomyelitis, or any of the pock diseases among animals intended for use or used in the manufacture of products, the manufacturer shall immediately notify the Director, Center for Biologics Evaluation and Research or the Director, Center for Drug Evaluation and Research (see mailing addresses in &#xA7; 600.2(a) or (b)).</P>
+<P>(7) <I>Monkeys used previously for experimental or test purposes.</I> Monkeys that have been used previously for experimental or test purposes with live microbiological agents shall not be used as a source of kidney tissue for the manufacture of vaccine. Except as provided otherwise in this subchapter, monkeys that have been used previously for other experimental or test purposes may be used as a source of kidney tissue upon their return to a normal condition, provided all quarantine requirements have been met.</P>
+<P>(8) <I>Necropsy examination of monkeys.</I> Each monkey used in the manufacture of vaccine shall be examined at necropsy under the direction of a qualified pathologist, physician, or veterinarian having experience with diseases of monkeys, for evidence of ill health, particularly for (i) evidence of tuberculosis, (ii) presence of herpes-like lesions, including eruptions or plaques on or around the lips, in the buccal cavity or on the gums, and (iii) signs of conjunctivitis. If there are any such signs or other significant gross pathological lesions, the tissue shall not be used in the manufacture of vaccine.</P>
+<P>(g) <I>Filling procedures.</I> Filling procedures shall be such as will not affect adversely the safety, purity or potency of the product.</P>
+<P>(h) <I>Containers and closures.</I> All final containers and closures shall be made of material that will not hasten the deterioration of the product or otherwise render it less suitable for the intended use. All final containers and closures shall be clean and free of surface solids, leachable contaminants and other materials that will hasten the deterioration of the product or otherwise render it less suitable for the intended use. After filling, sealing shall be performed in a manner that will maintain the integrity of the product during the dating period. In addition, final containers and closures for products intended for use by injection shall be sterile and free from pyrogens. Except as otherwise provided in the regulations of this subchapter, final containers for products intended for use by injection shall be colorless and sufficiently transparent to permit visual examination of the contents under normal light. As soon as possible after filling final containers shall be labeled as prescribed in &#xA7; 610.60 <I>et seq.</I> of this chapter, except that final containers may be stored without such prescribed labeling provided they are stored in a sealed receptacle labeled both inside and outside with at least the name of the product, the lot number, and the filling identification.</P>
+<CITA TYPE="N">[38 FR 32048, Nov. 20, 1973, as amended at 41 FR 10428, Mar. 11, 1976; 49 FR 23833, June 8, 1984; 55 FR 11013, Mar. 26, 1990; 68 FR 75119, Dec. 30, 2003; 70 FR 14982, Mar. 24, 2005; 72 FR 59003, Oct. 18, 2007; 80 FR 18092, Apr. 3, 2015]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.12" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.12&quot;,&quot;citation&quot;:&quot;21 CFR 600.12&quot;}">
+<HEAD>&#xA7; 600.12 Records.</HEAD>
+<P>(a) <I>Maintenance of records.</I> Records shall be made, concurrently with the performance, of each step in the manufacture and distribution of products, in such a manner that at any time successive steps in the manufacture and distribution of any lot may be traced by an inspector. Such records shall be legible and indelible, shall identify the person immediately responsible, shall include dates of the various steps, and be as detailed as necessary for clear understanding of each step by one experienced in the manufacture of products.</P>
+<P>(b) <I>Records retention</I>&#x2014;(1) <I>General.</I> Records shall be retained for such interval beyond the expiration date as is necessary for the individual product, to permit the return of any clinical report of unfavorable reactions. The retention period shall be no less than five years after the records of manufacture have been completed or six months after the latest expiration date for the individual product, whichever represents a later date.</P>
+<P>(2) <I>Records of recall.</I> Complete records shall be maintained pertaining to the recall from distribution of any product upon notification by the Director, Center for Biologics Evaluation and Research or the Director, Center for Drug Evaluation and Research, to recall for failure to conform with the standards prescribed in the regulations of this subchapter, because of deterioration of the product or for any other factor by reason of which the distribution of the product would constitute a danger to health.</P>
+<P>(3) <I>Suspension of requirement for retention.</I> The Director, Center for Biologics Evaluation and Research or the Director, Center for Drug Evaluation and Research, may authorize the suspension of the requirement to retain records of a specific manufacturing step upon a showing that such records no longer have significance for the purposes for which they were made: <I>Provided,</I> That a summary of such records shall be retained.</P>
+<P>(c) <I>Records of sterilization of equipment and supplies.</I> Records relating to the mode of sterilization, date, duration, temperature and other conditions relating to each sterilization of equipment and supplies used in the processing of products shall be made by means of automatic recording devices or by means of a system of recording which gives equivalent assurance of the accuracy and reliability of the record. Such records shall be maintained in a manner that permits an identification of the product with the particular manufacturing process to which the sterilization relates.</P>
+<P>(d) <I>Animal necropsy records.</I> A necropsy record shall be kept on each animal from which a biological product has been obtained and which dies or is sacrificed while being so used.</P>
+<P>(e) <I>Records in case of divided manufacturing responsibility.</I> If two or more establishments participate in the manufacture of a product, the records of each such establishment must show plainly the degree of its responsibility. In addition, each participating manufacturer shall furnish to the manufacturer who prepares the product in final form for sale, barter or exchange, a copy of all records relating to the manufacturing operations performed by such participating manufacturer insofar as they concern the safety, purity and potency of the lots of the product involved, and the manufacturer who prepares the product in final form shall retain a complete record of all the manufacturing operations relating to the product.</P>
+<CITA TYPE="N">[38 FR 32048, Nov. 20, 1973, as amended at 49 FR 23833, June 8, 1984; 55 FR 11013, Mar. 26, 1990; 70 FR 14982, Mar. 24, 2005]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.13" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.13&quot;,&quot;citation&quot;:&quot;21 CFR 600.13&quot;}">
+<HEAD>&#xA7; 600.13 Retention samples.</HEAD>
+<P>Manufacturers shall retain for a period of at least 6 months after the expiration date, unless a different time period is specified in additional standards, a quantity of representative material of each lot of each product, sufficient for examination and testing for safety and potency, except Whole Blood, Cryoprecipitated AHF, Platelets, Red Blood Cells, Plasma, and Source Plasma and Allergenic Products prepared to a physician's prescription. Samples so retained shall be selected at random from either final container material, or from bulk and final containers, provided they include at least one final container as a final package, or package-equivalent of such filling of each lot of the product as intended for distribution. Such sample material shall be stored at temperatures and under conditions which will maintain the identity and integrity of the product. Samples retained as required in this section shall be in addition to samples of specific products required to be submitted to the Center for Biologics Evaluation and Research or the Center for Drug Evaluation and Research (see mailing addresses in &#xA7; 600.2). Exceptions may be authorized by the Director, Center for Biologics Evaluation and Research or the Director, Center for Drug Evaluation and Research, when the lot yields relatively few final containers and when such lots are prepared by the same method in large number and in close succession.</P>
+<CITA TYPE="N">[41 FR 10428, Mar. 11, 1976, as amended at 49 FR 23833, June 8, 1984; 50 FR 4133, Jan. 29, 1985; 55 FR 11013, Mar. 26, 1990; 70 FR 14982, Mar. 24, 2005]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.14" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.14&quot;,&quot;citation&quot;:&quot;21 CFR 600.14&quot;}">
+<HEAD>&#xA7; 600.14 Reporting of biological product deviations by licensed manufacturers.</HEAD>
+<P>(a) <I>Who must report under this section?</I> (1) You, the manufacturer who holds the biological product license and who had control over the product when the deviation occurred, must report under this section. If you arrange for another person to perform a manufacturing, holding, or distribution step, while the product is in your control, that step is performed under your control. You must establish, maintain, and follow a procedure for receiving information from that person on all deviations, complaints, and adverse events concerning the affected product.</P>
+<P>(2) Exceptions:</P>
+<P>(i) Persons who manufacture only in vitro diagnostic products that are not subject to licensing under section 351 of the Public Health Service Act do not report biological product deviations for those products under this section but must report in accordance with part 803 of this chapter;</P>
+<P>(ii) Persons who manufacture blood and blood components, including licensed manufacturers, unlicensed registered blood establishments, and transfusion services, do not report biological product deviations for those products under this section but must report under &#xA7; 606.171 of this chapter;</P>
+<P>(iii) Persons who manufacture Source Plasma or any other blood component and use that Source Plasma or any other blood component in the further manufacture of another licensed biological product must report:</P>
+<P>(A) Under &#xA7; 606.171 of this chapter, if a biological product deviation occurs during the manufacture of that Source Plasma or any other blood component; or</P>
+<P>(B) Under this section, if a biological product deviation occurs after the manufacture of that Source Plasma or any other blood component, and during manufacture of the licensed biological product.</P>
+<P>(b) <I>What do I report under this section?</I> You must report any event, and information relevant to the event, associated with the manufacturing, to include testing, processing, packing, labeling, or storage, or with the holding or distribution, of a licensed biological product, if that event meets all the following criteria:</P>
+<P>(1) Either:</P>
+<P>(i) Represents a deviation from current good manufacturing practice, applicable regulations, applicable standards, or established specifications that may affect the safety, purity, or potency of that product; or</P>
+<P>(ii) Represents an unexpected or unforeseeable event that may affect the safety, purity, or potency of that product; and</P>
+<P>(2) Occurs in your facility or another facility under contract with you; and</P>
+<P>(3) Involves a distributed biological product.</P>
+<P>(c) <I>When do I report under this section?</I> You should report a biological product deviation as soon as possible but you must report at a date not to exceed 45-calendar days from the date you, your agent, or another person who performs a manufacturing, holding, or distribution step under your control, acquire information reasonably suggesting that a reportable event has occurred.</P>
+<P>(d) <I>How do I report under this section</I> You must report on Form FDA-3486.</P>
+<P>(e) <I>Where do I report under this section?</I> (1) For biological products regulated by the Center for Biologics Evaluation and Research (CBER), send the completed Form FDA 3486 to the CBER Document Control Center (see mailing address in &#xA7; 600.2(a)), or submit electronically using CBER's electronic Web-based application.</P>
+<P>(2) For biological products regulated by the Center for Drug Evaluation and Research (CDER), send the completed Form FDA-3486 to the Division of Compliance Risk Management and Surveillance (HFD-330) (see mailing addresses in &#xA7; 600.2). CDER does not currently accept electronic filings.</P>
+<P>(3) If you make a paper filing, you should identify on the envelope that a biological product deviation report (BPDR) is enclosed.</P>
+<P>(f) <I>How does this regulation affect other FDA regulations?</I> This part supplements and does not supersede other provisions of the regulations in this chapter. All biological product deviations, whether or not they are required to be reported under this section, should be investigated in accordance with the applicable provisions of parts 211 and 820 of this chapter.</P>
+<CITA TYPE="N">[65 FR 66634, Nov. 7, 2000, as amended at 70 FR 14982, Mar. 24, 2005; 80 FR 18092, Apr. 3, 2015]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.15" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.15&quot;,&quot;citation&quot;:&quot;21 CFR 600.15&quot;}">
+<HEAD>&#xA7; 600.15 Temperatures during shipment.</HEAD>
+<P>The following products shall be maintained during shipment at the specified temperatures:</P>
+<P>(a) <I>Products.</I></P>
+<DIV width="100%"><DIV class="gpotbl_div">
+<TABLE border="1" cellpadding="1" cellspacing="1" class="gpo_table" frame="void" width="100%">
+<THEAD>
+<TR>
+<TH class="center border-top-single border-bottom-single border-right-single">Product</TH>
+<TH class="center border-top-single border-bottom-single">Temperature</TH>
+</TR>
+</THEAD>
+<TBODY>
+<TR>
+<TD class="left border-right-single">Cryoprecipitated AHF</TD>
+<TD class="left">&#x2212;18 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Measles and Rubella Virus Vaccine Live</TD>
+<TD class="left">10 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Measles Live and Smallpox Vaccine</TD>
+<TD class="left"> Do.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Measles, Mumps, and Rubella Virus Vaccine Live</TD>
+<TD class="left"> Do.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Measles and Mumps Virus Vaccine Live</TD>
+<TD class="left"> Do.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Measles Virus Vaccine Live</TD>
+<TD class="left"> Do.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Mumps Virus Vaccine Live</TD>
+<TD class="left"> Do.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Fresh Frozen Plasma</TD>
+<TD class="left">&#x2212;18 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Liquid Plasma</TD>
+<TD class="left">1 to 10 &#xB0;C.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Plasma</TD>
+<TD class="left">&#x2212;18 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Platelet Rich Plasma</TD>
+<TD class="left">Between 1 and 10 &#xB0;C if the label indicates storage between 1 and 6 &#xB0;C, or all reasonable methods to maintain the temperature as close as possible to a range between 20 and 24 &#xB0;C, if the label indicates storage between 20 and 24 &#xB0;C.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Platelets</TD>
+<TD class="left">Between 1 and 10 &#xB0;C if the label indicates storage between 1 and 6 &#xB0;C, or all reasonable methods to maintain the temperature as close as possible to a range between 20 to 24 &#xB0;C, if the label indicates storage between 20 and 24 &#xB0;C.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Poliovirus Vaccine Live Oral Trivalent</TD>
+<TD class="left">0 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Poliovirus Vaccine Live Oral Type I</TD>
+<TD class="left"> Do.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Poliovirus Vaccine Live Oral Type II</TD>
+<TD class="left"> Do.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Poliovirus Vaccine Live Oral Type III</TD>
+<TD class="left"> Do.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Red Blood Cells (liquid product)</TD>
+<TD class="left">Between 1 and 10 &#xB0;C.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Red Blood Cells Frozen</TD>
+<TD class="left">&#x2212;65 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Rubella and Mumps Virus Vaccine Live</TD>
+<TD class="left">10 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Rubella Virus Vaccine Live</TD>
+<TD class="left"> Do.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Smallpox Vaccine (Liquid Product)</TD>
+<TD class="left">0 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Source Plasma</TD>
+<TD class="left">&#x2212;5 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Source Plasma Liquid</TD>
+<TD class="left">10 &#xB0;C or colder.</TD>
+</TR>
+<TR>
+<TD class="left border-right-single">Whole Blood</TD>
+<TD class="left">Blood that is transported from the collecting facility to the processing facility shall be transported in an environment capable of continuously cooling the blood toward a temperature range of 1 to 10 &#xB0;C, or at a temperature as close as possible to 20 to 24 &#xB0;C for a period not to exceed 6 hours. Blood transported from the storage facility shall be placed in an appropriate environment to maintain a temperature range between 1 to 10 &#xB0;C during shipment.</TD>
+</TR>
+<TR>
+<TD class="left border-bottom-single border-right-single">Yellow Fever Vaccine</TD>
+<TD class="left border-bottom-single">0 &#xB0;C or colder.</TD>
+</TR>
+</TBODY>
+</TABLE>
+</DIV></DIV>
+<P>(b) <I>Exemptions.</I> Exemptions or modifications shall be made only upon written approval, in the form of a supplement to the biologics license application, approved by the Director, Center for Biologics Evaluation and Research.</P>
+<CITA TYPE="N">[39 FR 39872, Nov. 12, 1974, as amended at 49 FR 23833, June 8, 1984; 50 FR 4133, Jan. 29, 1985; 50 FR 9000, Mar. 6, 1985; 55 FR 11013, Mar. 26, 1990; 59 FR 49351, Sept. 28, 1994; 64 FR 56449, Oct. 20, 1999]
+</CITA>
+</DIV8>
+
+</DIV6>
+<DIV6 N="C" TYPE="SUBPART" VOLUME="7" hierarchy_metadata="{&amp;quot;path&amp;quot;:&amp;quot;/on/_SUBSTITUTE_DATE_/title-21/part-600/subpart-C&amp;quot;,&amp;quot;citation&amp;quot;:&amp;quot;21 CFR Part 600 Subpart C&amp;quot;}">
+<HEAD>Subpart C&#x2014;Establishment Inspection</HEAD>
+<DIV8 N="600.20" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.20&quot;,&quot;citation&quot;:&quot;21 CFR 600.20&quot;}">
+<HEAD>&#xA7; 600.20 Inspectors.</HEAD>
+<P>Inspections shall be made by an officer of the Food and Drug Administration having special knowledge of the methods used in the manufacture and control of products and designated for such purposes by the Commissioner of Food and Drugs, or by any officer, agent, or employee of the Department of Health and Human Services specifically designated for such purpose by the Secretary.</P>
+<CITA TYPE="N">[38 FR 32048, Nov. 20, 1973]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.21" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.21&quot;,&quot;citation&quot;:&quot;21 CFR 600.21&quot;}">
+<HEAD>&#xA7; 600.21 Time of inspection.</HEAD>
+<P>The inspection of an establishment for which a biologics license application is pending need not be made until the establishment is in operation and is manufacturing the complete product for which a biologics license is desired.</P>
+<CITA TYPE="N">[38 FR 32048, Nov. 20, 1973, as amended at 48 FR 26314, June 7, 1983; 64 FR 56449, Oct. 20, 1999; 84 FR 12508, Apr. 2, 2019]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.22" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.22&quot;,&quot;citation&quot;:&quot;21 CFR 600.22&quot;}">
+<HEAD>&#xA7; 600.22 [Reserved]</HEAD>
+</DIV8>
+
+</DIV6>
+<DIV6 N="D" TYPE="SUBPART" VOLUME="7" hierarchy_metadata="{&amp;quot;path&amp;quot;:&amp;quot;/on/_SUBSTITUTE_DATE_/title-21/part-600/subpart-D&amp;quot;,&amp;quot;citation&amp;quot;:&amp;quot;21 CFR Part 600 Subpart D&amp;quot;}">
+<HEAD>Subpart D&#x2014;Reporting of Adverse Experiences</HEAD>
+<SOURCE>
+<HED>Source:</HED><PSPACE>59 FR 54042, Oct. 27, 1994, unless otherwise noted.
+</PSPACE></SOURCE>
+<DIV8 N="600.80" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.80&quot;,&quot;citation&quot;:&quot;21 CFR 600.80&quot;}">
+<HEAD>&#xA7; 600.80 Postmarketing reporting of adverse experiences.</HEAD>
+<P>(a) <I>Definitions.</I> The following definitions of terms apply to this section:</P>
+<P><I>Adverse experience.</I> Any adverse event associated with the use of a biological product in humans, whether or not considered product related, including the following: An adverse event occurring in the course of the use of a biological product in professional practice; an adverse event occurring from overdose of the product whether accidental or intentional; an adverse event occurring from abuse of the product; an adverse event occurring from withdrawal of the product; and any failure of expected pharmacological action.</P>
+<P><I>Blood Component.</I> As defined in &#xA7; 606.3(c) of this chapter.</P>
+<P><I>Disability.</I> A substantial disruption of a person's ability to conduct normal life functions.</P>
+<P><I>Individual case safety report (ICSR).</I> A description of an adverse experience related to an individual patient or subject.</P>
+<P><I>ICSR attachments.</I> Documents related to the adverse experience described in an ICSR, such as medical records, hospital discharge summaries, or other documentation.</P>
+<P><I>Life-threatening adverse experience.</I> Any adverse experience that places the patient, in the view of the initial reporter, at immediate risk of death from the adverse experience as it occurred, i.e., it does not include an adverse experience that, had it occurred in a more severe form, might have caused death.</P>
+<P><I>Serious adverse experience.</I> Any adverse experience occurring at any dose that results in any of the following outcomes: Death, a life-threatening adverse experience, inpatient hospitalization or prolongation of existing hospitalization, a persistent or significant disability/incapacity, or a congenital anomaly/birth defect. Important medical events that may not result in death, be life-threatening, or require hospitalization may be considered a serious adverse experience when, based upon appropriate medical judgment, they may jeopardize the patient or subject and may require medical or surgical intervention to prevent one of the outcomes listed in this definition. Examples of such medical events include allergic bronchospasm requiring intensive treatment in an emergency room or at home, blood dyscrasias or convulsions that do not result in inpatient hospitalization, or the development of drug dependency or drug abuse.</P>
+<P><I>Unexpected adverse experience</I>: Any adverse experience that is not listed in the current labeling for the biological product. This includes events that may be symptomatically and pathophysiologically related to an event listed in the labeling, but differ from the event because of greater severity or specificity. For example, under this definition, hepatic necrosis would be unexpected (by virtue of greater severity) if the labeling only referred to elevated hepatic enzymes or hepatitis. Similarly, cerebral thromboembolism and cerebral vasculitis would be unexpected (by virtue of greater specificity) if the labeling only listed cerebral vascular accidents. &#x201C;Unexpected,&#x201D; as used in this definition, refers to an adverse experience that has not been previously observed (i.e., included in the labeling) rather than from the perspective of such experience not being anticipated from the pharmacological properties of the pharmaceutical product.</P>
+<P>(b) <I>Review of adverse experiences.</I> Any person having a biologics license under &#xA7; 601.20 of this chapter must promptly review all adverse experience information pertaining to its product obtained or otherwise received by the applicant from any source, foreign or domestic, including information derived from commercial marketing experience, postmarketing clinical investigations, postmarketing epidemiological/surveillance studies, reports in the scientific literature, and unpublished scientific papers. Applicants are not required to resubmit to FDA adverse product experience reports forwarded to the applicant by FDA; applicants, however, must submit all followup information on such reports to FDA. Any person subject to the reporting requirements under paragraph (c) of this section must also develop written procedures for the surveillance, receipt, evaluation, and reporting of postmarketing adverse experiences to FDA.</P>
+<P>(c) <I>Reporting requirements.</I> The applicant must submit to FDA postmarketing 15-day Alert reports and periodic safety reports pertaining to its biological product as described in this section. These reports must be submitted to the Agency in electronic format as described in paragraph (h)(1) of this section, except as provided in paragraph (h)(2) of this section.</P>
+<P>(1)(i) <I>Postmarketing 15-day &#x201C;Alert reports&#x201D;.</I> The applicant must report each adverse experience that is both serious and unexpected, whether foreign or domestic, as soon as possible but no later than 15 calendar days from initial receipt of the information by the applicant.</P>
+<P>(ii) <I>Postmarketing 15-day &#x201C;Alert reports&#x201D;&#x2014;followup.</I> The applicant must promptly investigate all adverse experiences that are the subject of these postmarketing 15-day Alert reports and must submit followup reports within 15 calendar days of receipt of new information or as requested by FDA. If additional information is not obtainable, records should be maintained of the unsuccessful steps taken to seek additional information.</P>
+<P>(iii) <I>Submission of reports.</I> The requirements of paragraphs (c)(1)(i) and (c)(1)(ii) of this section, concerning the submission of postmarketing 15-day Alert reports, also apply to any person whose name appears on the label of a licensed biological product as a manufacturer, packer, distributor, shared manufacturer, joint manufacturer, or any other participant involved in divided manufacturing. To avoid unnecessary duplication in the submission to FDA of reports required by paragraphs (c)(1)(i) and (c)(1)(ii) of this section, obligations of persons other than the applicant of the final biological product may be met by submission of all reports of serious adverse experiences to the applicant of the final product. If a person elects to submit adverse experience reports to the applicant rather than to FDA, the person must submit, by any appropriate means, each report to the applicant within 5 calendar days of initial receipt of the information by the person, and the applicant must then comply with the requirements of this section. Under this circumstance, a person who elects to submit reports to the applicant of the final product shall maintain a record of this action which must include:</P>
+<P>(A) A copy of all adverse biological product experience reports submitted to the applicant of the final product;</P>
+<P>(B) The date the report was received by the person;</P>
+<P>(C) The date the report was submitted to the applicant of the final product; and&#x2014;</P>
+<P>(D) The name and address of the applicant of the final product.</P>
+<P>(2) <I>Periodic adverse experience reports.</I> (i) The applicant must report each adverse experience not reported under paragraph (c)(1)(i) of this section at quarterly intervals, for 3 years from the date of issuance of the biologics license, and then at annual intervals. The applicant must submit each quarterly report within 30 days of the close of the quarter (the first quarter beginning on the date of issuance of the biologics license) and each annual report within 60 days of the anniversary date of the issuance of the biologics license. Upon written notice, FDA may extend or reestablish the requirement that an applicant submit quarterly reports, or require that the applicant submit reports under this section at different times than those stated. Followup information to adverse experiences submitted in a periodic report may be submitted in the next periodic report.</P>
+<P>(ii) Each periodic report is required to contain:</P>
+<P>(A) <I>Descriptive information.</I> (<I>1</I>) A narrative summary and analysis of the information in the report;</P>
+<P>(<I>2</I>) An analysis of the 15-day Alert reports submitted during the reporting interval (all 15-day Alert reports being appropriately referenced by the applicant's patient identification code for nonvaccine biological product reports or by the unique case identification number for vaccine reports, adverse reaction term(s), and date of submission to FDA);</P>
+<P>(<I>3</I>) A history of actions taken since the last report because of adverse experiences (for example, labeling changes or studies initiated);</P>
+<P>(<I>4</I>) An index consisting of a line listing of the applicant's patient identification code for nonvaccine biological product reports or by the unique case identification number for vaccine reports and adverse reaction term(s) for ICSRs submitted under paragraph (c)(2)(ii)(B) of this section; and</P>
+<P>(B) <I>ICSRs for serious, expected and, nonserious adverse experiences.</I> An ICSR for each adverse experience not reported under paragraph (c)(1)(i) of this section (all serious, expected and nonserious adverse experiences). All such ICSRs must be submitted to FDA (either individually or in one or more batches) within the timeframe specified in paragraph (c)(2)(i) of this section. ICSRs must only be submitted to FDA once.</P>
+<P>(iii) Periodic reporting, except for information regarding 15-day Alert reports, does not apply to adverse experience information obtained from postmarketing studies (whether or not conducted under an investigational new drug application), from reports in the scientific literature, and from foreign marketing experience.</P>
+<P>(d) <I>Scientific literature.</I> A 15-day Alert report based on information in the scientific literature must be accompanied by a copy of the published article. The 15-day Alert reporting requirements in paragraph (c)(1)(i) of this section (i.e., serious, unexpected adverse experiences) apply only to reports found in scientific and medical journals either as case reports or as the result of a formal clinical trial.</P>
+<P>(e) <I>Postmarketing studies.</I> Applicants are not required to submit a 15-day Alert report under paragraph (c) of this section for an adverse experience obtained from a postmarketing clinical study (whether or not conducted under a biological investigational new drug application) unless the applicant concludes that there is a reasonable possibility that the product caused the adverse experience.</P>
+<P>(f) <I>Information reported on ICSRs for nonvaccine biological products.</I> ICSRs for nonvaccine biological products include the following information:</P>
+<P>(1) <I>Patient information.</I></P>
+<P>(i) Patient identification code;</P>
+<P>(ii) Patient age at the time of adverse experience, or date of birth;</P>
+<P>(iii) Patient gender; and</P>
+<P>(iv) Patient weight.</P>
+<P>(2) <I>Adverse experience.</I></P>
+<P>(i) Outcome attributed to adverse experience;</P>
+<P>(ii) Date of adverse experience;</P>
+<P>(iii) Date of report;</P>
+<P>(iv) Description of adverse experience (including a concise medical narrative);</P>
+<P>(v) Adverse experience term(s);</P>
+<P>(vi) Description of relevant tests, including dates and laboratory data; and</P>
+<P>(vii) Other relevant patient history, including preexisting medical conditions.</P>
+<P>(3) <I>Suspect medical product(s).</I></P>
+<P>(i) Name;</P>
+<P>(ii) Dose, frequency, and route of administration used;</P>
+<P>(iii) Therapy dates;</P>
+<P>(iv) Diagnosis for use (indication);</P>
+<P>(v) Whether the product is a combination product as defined in &#xA7; 3.2(e) of this chapter;</P>
+<P>(vi) Whether the product is a prescription or nonprescription product;</P>
+<P>(vii) Whether adverse experience abated after product use stopped or dose reduced;</P>
+<P>(viii) Whether adverse experience reappeared after reintroduction of the product;</P>
+<P>(ix) Lot number;</P>
+<P>(x) Expiration date;</P>
+<P>(xi) National Drug Code (NDC) number, or other unique identifier; and</P>
+<P>(xii) Concomitant medical products and therapy dates.</P>
+<P>(4) <I>Initial reporter information.</I></P>
+<P>(i) Name, address, and telephone number;</P>
+<P>(ii) Whether the initial reporter is a health care professional; and</P>
+<P>(iii) Occupation, if a health care professional.</P>
+<P>(5) <I>Applicant information.</I></P>
+<P>(i) Applicant name and contact office address;</P>
+<P>(ii) Telephone number;</P>
+<P>(iii) Report source, such as spontaneous, literature, or study;</P>
+<P>(iv) Date the report was received by applicant;</P>
+<P>(v) Application number and type;</P>
+<P>(vi) Whether the ICSR is a 15-day &#x201C;Alert report&#x201D;;</P>
+<P>(vii) Whether the ICSR is an initial report or followup report; and</P>
+<P>(viii) Unique case identification number, which must be the same in the initial report and any subsequent followup report(s).</P>
+<P>(g) <I>Information reported on ICSRs for vaccine products.</I> ICSRs for vaccine products include the following information:</P>
+<P>(1) <I>Patient information.</I></P>
+<P>(i) Patient name, address, telephone number;</P>
+<P>(ii) Patient age at the time of vaccination, or date of birth;</P>
+<P>(iii) Patient gender; and</P>
+<P>(iv) Patient birth weight for children under age 5.</P>
+<P>(2) <I>Adverse experience.</I></P>
+<P>(i) Outcome attributed to adverse experience;</P>
+<P>(ii) Date and time of adverse experience;</P>
+<P>(iii) Date of report;</P>
+<P>(iv) Description of adverse experience (including a concise medical narrative);</P>
+<P>(v) Adverse experience term(s);</P>
+<P>(vi) Illness at the time of vaccination;</P>
+<P>(vii) Description of relevant tests, including dates and laboratory data; and</P>
+<P>(viii) Other relevant patient history, including preexisting medical conditions.</P>
+<P>(3) <I>Suspect medical product(s), including vaccines administered on the same date.</I></P>
+<P>(i) Name;</P>
+<P>(ii) Dose, frequency, and route or site of administration used;</P>
+<P>(iii) Number of previous vaccine doses;</P>
+<P>(iv) Vaccination date(s) and time(s);</P>
+<P>(v) Diagnosis for use (indication);</P>
+<P>(vi) Whether the product is a combination product (as defined in &#xA7; 3.2(e) of this chapter);</P>
+<P>(vii) Whether the adverse experience abated after product use stopped or dose reduced;</P>
+<P>(viii) Whether the adverse experience reappeared after reintroduction of the product;</P>
+<P>(ix) Lot number;</P>
+<P>(x) Expiration date;</P>
+<P>(xi) National Drug Code (NDC) number, or other unique identifier; and</P>
+<P>(xii) Concomitant medical products and therapy dates.</P>
+<P>(4) <I>Vaccine(s) administered in the 4 weeks prior to the vaccination date.</I></P>
+<P>(i) Name of vaccine;</P>
+<P>(ii) Manufacturer;</P>
+<P>(iii) Lot number;</P>
+<P>(iv) Route or site of administration;</P>
+<P>(v) Date given; and</P>
+<P>(vi) Number of previous doses.</P>
+<P>(5) <I>Initial reporter information.</I></P>
+<P>(i) Name, address, and telephone number;</P>
+<P>(ii) Whether the initial reporter is a health care professional; and</P>
+<P>(iii) Occupation, if a health care professional.</P>
+<P>(6) <I>Facility and personnel where vaccine was administered.</I></P>
+<P>(i) Name of person who administered vaccine;</P>
+<P>(ii) Name of responsible physician at facility where vaccine was administered; and</P>
+<P>(iii) Name, address (including city, county, and state), and telephone number of facility where vaccine was administered.</P>
+<P>(7) <I>Applicant information.</I></P>
+<P>(i) Applicant name and contact office address;</P>
+<P>(ii) Telephone number;</P>
+<P>(iii) Report source, such as spontaneous, literature, or study;</P>
+<P>(iv) Date received by applicant;</P>
+<P>(v) Application number and type;</P>
+<P>(vi) Whether the ICSR is a 15-day &#x201C;Alert report&#x201D;;</P>
+<P>(vii) Whether the ICSR is an initial report or followup report; and</P>
+<P>(viii) Unique case identification number, which must be the same in the initial report and any subsequent followup report(s).</P>
+<P>(h) <I>Electronic format for submissions.</I> (1) Safety report submissions, including ICSRs, ICSR attachments, and the descriptive information in periodic reports, must be in an electronic format that FDA can process, review, and archive. FDA will issue guidance on how to provide the electronic submission (e.g., method of transmission, media, file formats, preparation and organization of files).</P>
+<P>(2) Persons subject to the requirements of paragraph (c) of this section may request, in writing, a temporary waiver of the requirements in paragraph (h)(1) of this section. These waivers will be granted on a limited basis for good cause shown. FDA will issue guidance on requesting a waiver of the requirements in paragraph (h)(1) of this section. Requests for waivers must be submitted in accordance with &#xA7; 600.90.</P>
+<P>(i) <I>Multiple reports.</I> An applicant should not include in reports under this section any adverse experience that occurred in clinical trials if they were previously submitted as part of the biologics license application. If a report refers to more than one biological product marketed by an applicant, the applicant should submit the report to the biologics license application for the product listed first in the report.</P>
+<P>(j) <I>Patient privacy.</I> For nonvaccine biological products, an applicant should not include in reports under this section the names and addresses of individual patients; instead, the applicant should assign a unique code for identification of the patient. The applicant should include the name of the reporter from whom the information was received as part of the initial reporter information, even when the reporter is the patient. The names of patients, health care professionals, hospitals, and geographical identifiers in adverse experience reports are not releasable to the public under FDA's public information regulations in part 20 of this chapter. For vaccine adverse experience reports, these data will become part of the CDC Privacy Act System 09-20-0136, &#x201C;Epidemiologic Studies and Surveillance of Disease Problems.&#x201D; Information identifying the person who received the vaccine or that person's legal representative will not be made available to the public, but may be available to the vaccinee or legal representative.</P>
+<P>(k) <I>Recordkeeping.</I> The applicant must maintain for a period of 10 years records of all adverse experiences known to the applicant, including raw data and any correspondence relating to the adverse experiences.</P>
+<P>(l) <I>Revocation of biologics license.</I> If an applicant fails to establish and maintain records and make reports required under this section with respect to a licensed biological product, FDA may revoke the biologics license for such a product in accordance with the procedures of &#xA7; 601.5 of this chapter.</P>
+<P>(m) <I>Exemptions.</I> Manufacturers of the following listed products are not required to submit adverse experience reports under this section:</P>
+<P>(1) Whole blood or components of whole blood.</P>
+<P>(2) In vitro diagnostic products, including assay systems for the detection of antibodies or antigens to retroviruses. These products are subject to the reporting requirements for devices.</P>
+<P>(n) <I>Disclaimer.</I> A report or information submitted by an applicant under this section (and any release by FDA of that report or information) does not necessarily reflect a conclusion by the applicant or FDA that the report or information constitutes an admission that the biological product caused or contributed to an adverse effect. An applicant need not admit, and may deny, that the report or information submitted under this section constitutes an admission that the biological product caused or contributed to an adverse effect. For purposes of this provision, this paragraph also includes any person reporting under paragraph (c)(1)(iii) of this section.</P>
+<CITA TYPE="N">[59 FR 54042, Oct. 27, 1994, as amended at 62 FR 34168, June 25, 1997; 62 FR 52252, Oct. 7, 1997; 63 FR 14612, Mar. 26, 1998; 64 FR 56449, Oct. 20, 1999; 70 FR 14982, Mar. 24, 2005; 79 FR 33090, June 10, 2014]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.81" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.81&quot;,&quot;citation&quot;:&quot;21 CFR 600.81&quot;}">
+<HEAD>&#xA7; 600.81 Distribution reports.</HEAD>
+<P>(a) <I>Reporting requirements.</I> The applicant must submit to the Center for Biologics Evaluation and Research or the Center for Drug Evaluation and Research, information about the quantity of the product distributed under the biologics license, including the quantity distributed to distributors. The interval between distribution reports must be 6 months. Upon written notice, FDA may require that the applicant submit distribution reports under this section at times other than every 6 months. The distribution report must consist of the bulk lot number (from which the final container was filled), the fill lot numbers for the total number of dosage units of each strength or potency distributed (e.g., fifty thousand per 10-milliliter vials), the label lot number (if different from fill lot number), labeled date of expiration, number of doses in fill lot/label lot, date of release of fill lot/label lot for distribution at that time. If any significant amount of a fill lot/label lot is returned, include this information. Disclosure of financial or pricing data is not required. As needed, FDA may require submission of more detailed product distribution information. Upon written notice, FDA may require that the applicant submit reports under this section at times other than those stated. Requests by an applicant to submit reports at times other than those stated should be made as a request for a waiver under &#xA7; 600.90.</P>
+<P>(b)(1) <I>Electronic format.</I> Except as provided for in paragraph (b)(2) of this section, the distribution reports required under paragraph (a) of this section must be submitted to the Agency in an electronic format that FDA can process, review, and archive. FDA will issue guidance on how to provide the electronic submission (e.g., method of transmission, media, file formats, preparation and organization of files).</P>
+<P>(2) <I>Waivers.</I> An applicant may request, in writing, a temporary waiver of the requirements in paragraph (b)(1) of this section. These waivers will be granted on a limited basis for good cause shown. FDA will issue guidance on requesting a waiver of the requirements in paragraph (b)(1) of this section. Requests for waivers must be submitted in accordance with &#xA7; 600.90.</P>
+<CITA TYPE="N">[59 FR 54042, Oct. 27, 1994, as amended at 64 FR 56449, Oct. 20, 1999; 70 FR 14983, Mar. 24, 2005; 79 FR 33091, June 10, 2014]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.82" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.82&quot;,&quot;citation&quot;:&quot;21 CFR 600.82&quot;}">
+<HEAD>&#xA7; 600.82 Notification of a permanent discontinuance or an interruption in manufacturing.</HEAD>
+<P>(a) <I>Notification of a permanent discontinuance or an interruption in manufacturing.</I> (1) An applicant of a biological product, other than blood or blood components for transfusion, which is licensed under section 351 of the Public Health Service Act, and which may be dispensed only under prescription under section 503(b)(1) of the Federal Food, Drug, and Cosmetic Act (21 U.S.C. 353(b)(1)), must notify FDA in writing of a permanent discontinuance of manufacture of the biological product or an interruption in manufacturing of the biological product that is likely to lead to a meaningful disruption in supply of that biological product in the United States if:</P>
+<P>(i) The biological product is life supporting, life sustaining, or intended for use in the prevention or treatment of a debilitating disease or condition, including any such biological product used in emergency medical care or during surgery; and</P>
+<P>(ii) The biological product is not a radiopharmaceutical biological product.</P>
+<P>(2) An applicant of blood or blood components for transfusion, which is licensed under section 351 of the Public Health Service Act, and which may be dispensed only under prescription under section 503(b) of the Federal Food, Drug, and Cosmetic Act, must notify FDA in writing of a permanent discontinuance of manufacture of any product listed in its license or an interruption in manufacturing of any such product that is likely to lead to a significant disruption in supply of that product in the United States if:</P>
+<P>(i) The product is life supporting, life sustaining, or intended for use in the prevention or treatment of a debilitating disease or condition, including any such product used in emergency medical care or during surgery; and</P>
+<P>(ii) The applicant is a manufacturer of a significant percentage of the U.S. blood supply.</P>
+<P>(b) <I>Submission and timing of notification.</I> Notifications required by paragraph (a) of this section must be submitted to FDA electronically in a format that FDA can process, review, and archive:</P>
+<P>(1) At least 6 months prior to the date of the permanent discontinuance or interruption in manufacturing; or</P>
+<P>(2) If 6 months' advance notice is not possible because the permanent discontinuance or interruption in manufacturing was not reasonably anticipated 6 months in advance, as soon as practicable thereafter, but in no case later than 5 business days after such a permanent discontinuance or interruption in manufacturing occurs.</P>
+<P>(c) <I>Information included in notification.</I> Notifications required by paragraph (a) of this section must include the following information:</P>
+<P>(1) The name of the biological product subject to the notification, including the National Drug Code for such biological product, or an alternative standard for identification and labeling that has been recognized as acceptable by the Center Director;</P>
+<P>(2) The name of the applicant of the biological product;</P>
+<P>(3) Whether the notification relates to a permanent discontinuance of the biological product or an interruption in manufacturing of the biological product;</P>
+<P>(4) A description of the reason for the permanent discontinuance or interruption in manufacturing; and</P>
+<P>(5) The estimated duration of the interruption in manufacturing.</P>
+<P>(d)(1) <I>Public list of biological product shortages.</I> FDA will maintain a publicly available list of biological products that are determined by FDA to be in shortage. This biological product shortages list will include the following information:</P>
+<P>(i) The names and National Drug Codes for such biological products, or the alternative standards for identification and labeling that have been recognized as acceptable by the Center Director;</P>
+<P>(ii) The name of each applicant for such biological products;</P>
+<P>(iii) The reason for the shortage, as determined by FDA, selecting from the following categories: Requirements related to complying with good manufacturing practices; regulatory delay; shortage of an active ingredient; shortage of an inactive ingredient component; discontinuation of the manufacture of the biological product; delay in shipping of the biological product; demand increase for the biological product; or other reason; and</P>
+<P>(iv) The estimated duration of the shortage.</P>
+<P>(2) <I>Confidentiality.</I> FDA may choose not to make information collected to implement this paragraph available on the biological product shortages list or available under section 506C(c) of the Federal Food, Drug, and Cosmetic Act (21 U.S.C. 356c(c)) if FDA determines that disclosure of such information would adversely affect the public health (such as by increasing the possibility of hoarding or other disruption of the availability of the biological product to patients). FDA will also not provide information on the public shortages list or under section 506C(c) of the Federal Food, Drug, and Cosmetic Act that is protected by 18 U.S.C. 1905 or 5 U.S.C. 552(b)(4), including trade secrets and commercial or financial information that is considered confidential or privileged under &#xA7; 20.61 of this chapter.</P>
+<P>(e) <I>Noncompliance letters.</I> If an applicant fails to submit a notification as required under paragraph (a) of this section and in accordance with paragraph (b) of this section, FDA will issue a letter to the applicant informing it of such failure.</P>
+<P>(1) Not later than 30 calendar days after the issuance of such a letter, the applicant must submit to FDA a written response setting forth the basis for noncompliance and providing the required notification under paragraph (a) of this section and including the information required under paragraph (c) of this section; and</P>
+<P>(2) Not later than 45 calendar days after the issuance of a letter under this paragraph, FDA will make the letter and the applicant's response to the letter public, unless, after review of the applicant's response, FDA determines that the applicant had a reasonable basis for not notifying FDA as required under paragraph (a) of this section.</P>
+<P>(f) <I>Definitions.</I> The following definitions of terms apply to this section:</P>
+<P><I>Biological product shortage</I> or <I>shortage</I> means a period of time when the demand or projected demand for the biological product within the United States exceeds the supply of the biological product.</P>
+<P><I>Intended for use in the prevention or treatment of a debilitating disease or condition</I> means a biological product intended for use in the prevention or treatment of a disease or condition associated with mortality or morbidity that has a substantial impact on day-to-day functioning.</P>
+<P><I>Life supporting or life sustaining</I> means a biological product that is essential to, or that yields information that is essential to, the restoration or continuation of a bodily function important to the continuation of human life.</P>
+<P><I>Meaningful disruption</I> means a change in production that is reasonably likely to lead to a reduction in the supply of a biological product by a manufacturer that is more than negligible and affects the ability of the manufacturer to fill orders or meet expected demand for its product, and does not include interruptions in manufacturing due to matters such as routine maintenance or insignificant changes in manufacturing so long as the manufacturer expects to resume operations in a short period of time.</P>
+<P><I>Significant disruption</I> means a change in production that is reasonably likely to lead to a reduction in the supply of blood or blood components by a manufacturer that substantially affects the ability of the manufacturer to fill orders or meet expected demand for its product, and does not include interruptions in manufacturing due to matters such as routine maintenance or insignificant changes in manufacturing so long as the manufacturer expects to resume operations in a short period of time.</P>
+<CITA TYPE="N">[80 FR 38939, July 8, 2015]
+</CITA>
+</DIV8>
+
+<DIV8 N="600.90" TYPE="SECTION" hierarchy_metadata="{&quot;path&quot;:&quot;/on/_SUBSTITUTE_DATE_/title-21/section-600.90&quot;,&quot;citation&quot;:&quot;21 CFR 600.90&quot;}">
+<HEAD>&#xA7; 600.90 Waivers.</HEAD>
+<P>(a) An applicant may ask the Food and Drug Administration to waive under this section any requirement that applies to the applicant under &#xA7;&#xA7; 600.80 and 600.81. A waiver request under this section is required to be submitted with supporting documentation. The waiver request is required to contain one of the following:</P>
+<P>(1) An explanation why the applicant's compliance with the requirement is unnecessary or cannot be achieved,</P>
+<P>(2) A description of an alternative submission that satisfies the purpose of the requirement, or</P>
+<P>(3) Other information justifying a waiver.</P>
+<P>(b) FDA may grant a waiver if it finds one of the following:</P>
+<P>(1) The applicant's compliance with the requirement is unnecessary or cannot be achieved,</P>
+<P>(2) The applicant's alternative submission satisfies the requirement, or</P>
+<P>(3) The applicant's submission otherwise justifies a waiver.</P>
+<CITA TYPE="N">[59 FR 54042, Oct. 27, 1994, as amended at 79 FR 33092, June 10, 2014]
+</CITA>
+</DIV8>
+
+</DIV6>
+</DIV5>

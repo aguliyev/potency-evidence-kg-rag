@@ -1,0 +1,139 @@
+{
+  "id": "potency-behavior-fixtures",
+  "version": "potency-behavior-fixture-v1",
+  "synthetic": true,
+  "official_corpus_records": 0,
+  "ingestion_policy": "Only input records are evidence. Scenario metadata controls scope and declared revisions; questions and expected behavior are evaluation inputs, never retrieval evidence.",
+  "required_answer_records": 3,
+  "scenarios": [
+    {
+      "id": "source-correction",
+      "query_scope": {
+        "tenant_id": "fixture-tenant",
+        "project_id": "source-correction"
+      },
+      "question_id": "F-update",
+      "question": "According to the current assay record, which attribute does assay Lumen measure for FixtureProduct?",
+      "mode_policy": "One chosen mode, unchanged across both stages.",
+      "stages": [
+        {
+          "id": "before",
+          "operation": "import",
+          "input_records": [
+            "fixtures/inputs/source-correction-v1.jsonl"
+          ],
+          "corpus_snapshot": "potency-behavior-fixture-v1-correction-before",
+          "current_source_refs": [
+            {
+              "scope": {
+                "tenant_id": "fixture-tenant",
+                "project_id": "source-correction"
+              },
+              "source_id": "assay-attribute-note",
+              "source_version": "fixture-v1",
+              "passage_id": "assay-attribute-note:p0001"
+            }
+          ],
+          "expected_attribute": "alpha"
+        },
+        {
+          "id": "after",
+          "operation": "replace_source_revision",
+          "input_records": [
+            "fixtures/inputs/source-correction-v2.jsonl"
+          ],
+          "corpus_snapshot": "potency-behavior-fixture-v1-correction-after",
+          "current_source_refs": [
+            {
+              "scope": {
+                "tenant_id": "fixture-tenant",
+                "project_id": "source-correction"
+              },
+              "source_id": "assay-attribute-note",
+              "source_version": "fixture-v2",
+              "passage_id": "assay-attribute-note:p0001"
+            }
+          ],
+          "supersedes_source_refs": [
+            {
+              "scope": {
+                "tenant_id": "fixture-tenant",
+                "project_id": "source-correction"
+              },
+              "source_id": "assay-attribute-note",
+              "source_version": "fixture-v1",
+              "passage_id": "assay-attribute-note:p0001"
+            }
+          ],
+          "expected_attribute": "beta"
+        }
+      ],
+      "required_checks": [
+        "before_answer_grounded_in_v1",
+        "after_answer_grounded_in_v2",
+        "superseded_assertion_not_current",
+        "old_sources_assertions_answers_traces_inspectable",
+        "versioned_citations_resolve_exactly"
+      ],
+      "notes": [
+        "Full rebuild allowed; preserve pre-update exports before rebuilding.",
+        "Archive-only v1 evidence must not enter the default current retrieval context. No historical re-query is required.",
+        "The original record remains inspectable. Do not erase real historical proposals from the main FDA case just because they describe earlier events."
+      ]
+    },
+    {
+      "id": "unresolved-conflict",
+      "query_scope": {
+        "tenant_id": "fixture-tenant",
+        "project_id": "unresolved-conflict"
+      },
+      "question_id": "F-conflict",
+      "question": "As of 2026-09-01, is assay Vega used as a release assay under plan K for FixtureProduct? Explain what the supplied notes establish.",
+      "mode_policy": "One chosen mode.",
+      "stages": [
+        {
+          "id": "combined",
+          "operation": "import_together",
+          "input_records": [
+            "fixtures/inputs/conflict-note-a.jsonl",
+            "fixtures/inputs/conflict-note-b.jsonl"
+          ],
+          "corpus_snapshot": "potency-behavior-fixture-v1-conflict",
+          "current_source_refs": [
+            {
+              "scope": {
+                "tenant_id": "fixture-tenant",
+                "project_id": "unresolved-conflict"
+              },
+              "source_id": "plan-k-note-a",
+              "source_version": "fixture-v1",
+              "passage_id": "plan-k-note-a:p0001"
+            },
+            {
+              "scope": {
+                "tenant_id": "fixture-tenant",
+                "project_id": "unresolved-conflict"
+              },
+              "source_id": "plan-k-note-b",
+              "source_version": "fixture-v1",
+              "passage_id": "plan-k-note-b:p0001"
+            }
+          ]
+        }
+      ],
+      "resolution_context": {
+        "equal_authority": true,
+        "same_product_indication_plan_effective_date": true,
+        "declared_supersession": false,
+        "document_issue_date_alone_resolves_conflict": false
+      },
+      "required_checks": [
+        "both_claims_preserved",
+        "both_sources_in_generation_evidence",
+        "both_sources_cited_exactly",
+        "answer_reports_unresolved_conflict",
+        "newer_issue_date_not_used_as_automatic_override"
+      ]
+    }
+  ]
+}

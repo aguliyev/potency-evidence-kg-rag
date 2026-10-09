@@ -1,0 +1,12 @@
+{
+  "version": "isolation-fixture-v1",
+  "local_identity_collision": {
+    "source_id": "shared-document",
+    "source_version": "fixture-v1",
+    "passage_id": "shared-document:p0001"
+  },
+  "assertions": [
+    {"query_scope": {"tenant_id": "fixture-tenant", "project_id": "project-one"}, "must_contain": "PROJECT_ONE_ONLY", "must_not_contain": "PROJECT_TWO_ONLY"},
+    {"query_scope": {"tenant_id": "fixture-tenant", "project_id": "project-two"}, "must_contain": "PROJECT_TWO_ONLY", "must_not_contain": "PROJECT_ONE_ONLY"}
+  ]
+}

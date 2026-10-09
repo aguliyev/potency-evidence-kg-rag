@@ -1,0 +1,33 @@
+[
+  {
+    "id": "P1",
+    "question": "What does the supplied CFR material establish about potency testing, and what is the different role of FDA guidance?",
+    "compare_modes": false
+  },
+  {
+    "id": "P2",
+    "question": "How should the 2011 final potency guidance and 2023 draft potency-assurance guidance be used together in this corpus snapshot?",
+    "compare_modes": false
+  },
+  {
+    "id": "P3",
+    "question": "What potency approach did the applicant initially propose for CASGEVY, what did FDA request or challenge, and what changed before the reviewer reached a conclusion?",
+    "compare_modes": true,
+    "max_evidence_chars_per_mode": 6000
+  },
+  {
+    "id": "P4",
+    "question": "Which CASGEVY assays or measured attributes are described as serving potency, identity, release, characterization, stability, or supporting roles? Preserve overlap and uncertainty rather than forcing one role per assay.",
+    "compare_modes": false
+  },
+  {
+    "id": "P5",
+    "question": "Did the reviewed material establish correlation between the potency strategy and clinical outcomes? Which potency details or acceptance criteria cannot be recovered from the public package?",
+    "compare_modes": false
+  },
+  {
+    "id": "P6",
+    "question": "Compare CASGEVY with the supplied ZYNTEGLO and LYFGENIA SBRAs. Identify one supported pattern and one reason these comparators should not be treated as establishing a universal product requirement.",
+    "compare_modes": false
+  }
+]
