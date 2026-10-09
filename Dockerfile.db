@@ -1,0 +1,17 @@
+FROM pgvector/pgvector:0.8.7-pg17-bookworm
+
+ARG AGE_VERSION=1.7.0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        build-essential \
+        flex \
+        bison \
+        postgresql-server-dev-17 \
+    && git clone --depth 1 --branch "release/PG17/${AGE_VERSION}" \
+        https://github.com/apache/age.git /tmp/age \
+    && make -C /tmp/age PG_CONFIG=/usr/bin/pg_config install \
+    && rm -rf /tmp/age /var/lib/apt/lists/*
+

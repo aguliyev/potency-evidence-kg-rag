@@ -1,0 +1,17 @@
+.git
+.idea
+.agents
+.aws
+.codex
+.venv
+__pycache__
+*.py[cod]
+.env
+corpus
+fixtures
+docs
+configs
+schema
+results
+*.pdf
+*.ipynb_checkpoints

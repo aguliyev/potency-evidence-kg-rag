@@ -1,0 +1,70 @@
+services:
+  db:
+    image: local-notebook-db:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-notebook}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notebook-local-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-notebook}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  migrate:
+    image: local-notebook-python:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.notebook
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-notebook}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notebook-local-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-notebook}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  notebook:
+    image: local-notebook-python:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.notebook
+    command:
+      - jupyter
+      - lab
+      - --ip=0.0.0.0
+      - --port=8888
+      - --no-browser
+      - --ServerApp.token=${JUPYTER_TOKEN:-local-development-token}
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-notebook}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notebook-local-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-notebook}
+    ports:
+      - "127.0.0.1:${JUPYTER_PORT:-8888}:8888"
+    volumes:
+      - ./lib:/workspace/lib
+      - ./notebooks:/workspace/notebooks
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

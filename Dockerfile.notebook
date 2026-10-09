@@ -1,0 +1,18 @@
+FROM python:3.12.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/workspace/lib
+
+WORKDIR /workspace
+
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
+
+COPY alembic.ini ./alembic.ini
+COPY migrations/ ./migrations/
+COPY lib/ ./lib/
+COPY notebooks/ ./notebooks/
+
+EXPOSE 8888
+
