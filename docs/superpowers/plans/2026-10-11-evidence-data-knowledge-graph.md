@@ -21,6 +21,7 @@
 - Put all new documentation in `docs/`. Keep root `README.md` unchanged, and do not read or modify `docs/scratchpad.md`.
 - Keep application behavior, prompts, Jev bundle definitions, and trusted project defaults beneath `lib/potency_kg/`; notebooks only orchestrate and present library results.
 - Use only the existing environment variables `LLM_URI`, `LLM_MODEL`, `LLM_API_KEY`, `EMBEDDING_LLM_URI`, `EMBEDDING_LLM_MODEL`, `EMBEDDING_LLM_API_KEY`, and `TYPESAFE_API_KEY` for model stages.
+- For the official KG run, set `EMBEDDING_LLM_URI=https://api.openai.com/v1` and `EMBEDDING_LLM_MODEL=text-embedding-3-large`. Request the model's full `3072` dimensions with `encoding_format="float"`; do not shorten vectors in this phase.
 - Treat generation and embedding URIs as OpenAI-compatible `/v1` base endpoints. Internally map generation model `M` to Instructor selector `openai/M`.
 - Use Instructor only for structured generation. Use a dedicated OpenAI-compatible embedding adapter for passage and query embeddings. Use TypeSafe/Jev for bundle classification.
 - Load each model setting only when its stage runs. Import, structural projection, schema inspection, and structural export must work without model credentials.
@@ -63,9 +64,12 @@ class GenerationSettings(BaseModel, frozen=True):
 
 class EmbeddingSettings(BaseModel, frozen=True):
     base_url: AnyHttpUrl
-    model: str
+    model: Literal["text-embedding-3-large"]
     credential_env: Literal["EMBEDDING_LLM_API_KEY"]
     sanitized_origin: str
+    dimensions: Literal[3072] = 3072
+    encoding_format: Literal["float"] = "float"
+    normalization: Literal["provider_unit_length_v1"] = "provider_unit_length_v1"
     timeout_seconds: float = 60.0
     max_attempts: int = 3
     batch_size: int = 64
@@ -109,7 +113,7 @@ For a selected passage, construct the Instructor response model from exactly the
 
 Canonical JSON uses sorted object keys, UTF-8, no insignificant whitespace, ordered lists where order is semantic, and SHA-256 with a version-kind prefix. The following identities are separate:
 
-- `embedding_version`: embedding model ID, dimensions, and normalization.
+- `embedding_version`: embedding model ID (`text-embedding-3-large` for the official run), dimensions (`3072`), encoding format (`float`), and normalization (`provider_unit_length_v1`).
 - `index_version`: `embedding_version` plus the sorted exact membership of active scoped passage identities and text hashes.
 - `jev_response_version`: Jev model, seven question definitions, criteria, normalization, canonical redacted input text (hashed into the digest), prompt/bundle hashes, and project-profile name/resolved aliases/source hash/version.
 - `jev_selection_version`: `jev_response_version` plus resolved default and per-bundle thresholds.
@@ -301,7 +305,7 @@ Composite foreign keys from `assertion`, `entity_mention`, `alias_candidate`, `k
 
 - [ ] **Step 1: Write failing runtime, settings, and protected-input tests**
 
-Test that structural imports do not access model variables; each real loader names missing variables precisely; both OpenAI-compatible URIs normalize to `/v1`; userinfo/query/fragment credentials are rejected; generation maps to `openai/<model>`; serialized settings omit values of all three keys; profile hashes change when aliases or descriptor bytes change; and protected hashes include every file beneath the four protected roots.
+Test that structural imports do not access model variables; each real loader names missing variables precisely; both OpenAI-compatible URIs normalize to `/v1`; userinfo/query/fragment credentials are rejected; generation maps to `openai/<model>`; the official embedding settings require `https://api.openai.com/v1`, `text-embedding-3-large`, `3072` dimensions, and `float` encoding; serialized settings omit values of all three keys; profile hashes change when aliases or descriptor bytes change; and protected hashes include every file beneath the four protected roots.
 
 Also assert `stat.S_IMODE(Path("bin/runner").stat().st_mode) & 0o111 != 0` and that Compose mounts `/workspace/configs`, `/workspace/corpus`, `/workspace/fixtures`, and `/workspace/schema` read-only.
 
@@ -326,6 +330,15 @@ EMBEDDING_ENV = (
 )
 JEV_ENV = ("TYPESAFE_API_KEY",)
 ```
+
+For the official run, validate these non-secret values without adding new environment variables:
+
+```dotenv
+EMBEDDING_LLM_URI=https://api.openai.com/v1
+EMBEDDING_LLM_MODEL=text-embedding-3-large
+```
+
+`EmbeddingSettings` supplies `dimensions=3072`, `encoding_format="float"`, and `normalization="provider_unit_length_v1"` as immutable application defaults. Resolve only `EMBEDDING_LLM_API_KEY` from `etc/secrets/.env` when constructing the real embedding adapter.
 
 `load_project_profile` maps official scope `public-fda/casgevy-potency` to profile `casgevy-v1`, resolves `CASGEVY`, `exagamglogene autotemcel`, and `exa-cel` to product `casgevy`, and records the protected descriptor path/hash. All other scopes receive profile `empty-v1` with no aliases.
 
@@ -522,15 +535,47 @@ git commit -m "feat: import protected evidence atomically"
 **Interfaces:**
 
 ```python
+@dataclass(frozen=True)
+class EmbeddingClientIdentity:
+    provider: str
+    model: str
+    dimensions: int
+    encoding_format: Literal["float"]
+    normalization: str
+    sanitized_origin: str
+    credential_env: str
+
+@dataclass(frozen=True)
+class EmbeddingBatch:
+    model: str
+    vectors: tuple[tuple[float, ...], ...]
+    dimensions: int
+    encoding_format: Literal["float"]
+    normalization: str
+    prompt_tokens: int
+    total_tokens: int
+
+class EmbeddingInputError(ValueError): ...
+class EmbeddingProtocolError(RuntimeError): ...
+
 class EmbeddingClient(Protocol):
     identity: EmbeddingClientIdentity
+    def embed(self, texts: Sequence[str]) -> EmbeddingBatch: ...
+
+class OpenAIEmbeddingClient:
+    def __init__(
+        self,
+        settings: EmbeddingSettings,
+        api_key: SecretStr,
+        client: OpenAI | None = None,
+    ) -> None: ...
+
     def embed(self, texts: Sequence[str]) -> EmbeddingBatch: ...
 
 def embed_active_passages(
     engine: Engine,
     scope: Scope,
     client: EmbeddingClient,
-    normalization: EmbeddingNormalization,
 ) -> EmbeddingReport: ...
 
 def embed_query(client: EmbeddingClient, text: str) -> QueryEmbedding: ...
@@ -545,7 +590,20 @@ def vector_search(
 
 - [ ] **Step 1: Write failing adapter/cache/index tests**
 
-Verify the real adapter uses `openai.OpenAI(base_url=<normalized /v1>, api_key=<resolved value>)` and `.embeddings.create`, never Instructor. Verify finite consistent dimensions, batching, sanitized metadata, query embedding through the same adapter, and no settings load in structural workflows.
+Verify the real adapter constructs `openai.OpenAI(base_url="https://api.openai.com/v1", api_key=<resolved value>, timeout=60.0)` and calls `.embeddings.create` with exactly:
+
+```python
+{
+    "model": "text-embedding-3-large",
+    "input": list(texts),
+    "encoding_format": "float",
+    "dimensions": 3072,
+}
+```
+
+Assert Instructor is never imported or called by the embedding adapter. Reject an empty batch, empty/whitespace input, a response count different from the input count, duplicate/missing/out-of-range response indexes, non-finite values, and vectors whose length is not exactly `3072`. Return vectors in input order by sorting and validating each response item's `index`, even if the test double returns response items out of order. Capture `response.model`, `usage.prompt_tokens`, and `usage.total_tokens` without retaining the SDK response object.
+
+Verify batches stop at `64` inputs, query embedding calls the same adapter with one input, adapter `repr` and exceptions omit the key, metadata contains only `text-embedding-3-large`, `3072`, `float`, `provider_unit_length_v1`, the sanitized origin, and `EMBEDDING_LLM_API_KEY`, and structural workflows never load embedding settings.
 
 Verify every active complete passage is embedded before skip/gating; unchanged inputs produce zero repeated calls; same text in another project does not share project cache entries; superseded vectors remain; correction reuses unchanged vectors; and exact active membership changes `index_version`.
 
@@ -557,7 +615,71 @@ Expected: missing embedding adapter and index interfaces.
 
 - [ ] **Step 3: Implement the dedicated OpenAI-compatible adapter**
 
-Resolve `EMBEDDING_LLM_API_KEY` only during adapter construction. Store model ID, dimensions, normalization, sanitized origin, and credential-variable name on each run. Deterministic test adapters use identity `test-double` and never set real-run status.
+Resolve `EMBEDDING_LLM_API_KEY` only during adapter construction. Implement the adapter body as the following algorithm; helper names may be private, but its validation and returned fields are part of the interface:
+
+```python
+class OpenAIEmbeddingClient:
+    def __init__(
+        self,
+        settings: EmbeddingSettings,
+        api_key: SecretStr,
+        client: OpenAI | None = None,
+    ) -> None:
+        self._settings = settings
+        self._client = client or OpenAI(
+            base_url=str(settings.base_url),
+            api_key=api_key.get_secret_value(),
+            timeout=settings.timeout_seconds,
+        )
+        self.identity = EmbeddingClientIdentity(
+            provider="openai-compatible",
+            model=settings.model,
+            dimensions=settings.dimensions,
+            encoding_format=settings.encoding_format,
+            normalization=settings.normalization,
+            sanitized_origin=settings.sanitized_origin,
+            credential_env=settings.credential_env,
+        )
+
+    def __repr__(self) -> str:
+        return f"OpenAIEmbeddingClient(identity={self.identity!r})"
+
+    def embed(self, texts: Sequence[str]) -> EmbeddingBatch:
+        inputs = list(texts)
+        if not inputs or any(not text.strip() for text in inputs):
+            raise EmbeddingInputError("embedding inputs must be non-empty text")
+        if len(inputs) > self._settings.batch_size:
+            raise EmbeddingInputError("embedding batch exceeds configured size 64")
+
+        response = self._client.embeddings.create(
+            model=self._settings.model,
+            input=inputs,
+            encoding_format=self._settings.encoding_format,
+            dimensions=self._settings.dimensions,
+        )
+        ordered = sorted(response.data, key=lambda item: item.index)
+        indexes = [item.index for item in ordered]
+        if indexes != list(range(len(inputs))):
+            raise EmbeddingProtocolError("embedding response indexes do not match inputs")
+
+        vectors = tuple(tuple(float(value) for value in item.embedding) for item in ordered)
+        if any(len(vector) != self._settings.dimensions for vector in vectors):
+            raise EmbeddingProtocolError("embedding response dimension is not 3072")
+        if any(not math.isfinite(value) for vector in vectors for value in vector):
+            raise EmbeddingProtocolError("embedding response contains non-finite values")
+
+        return EmbeddingBatch(
+            model=response.model,
+            vectors=vectors,
+            dimensions=self._settings.dimensions,
+            encoding_format=self._settings.encoding_format,
+            normalization=self._settings.normalization,
+            prompt_tokens=response.usage.prompt_tokens,
+            total_tokens=response.usage.total_tokens,
+        )
+```
+
+The official API accepts batched string inputs, `encoding_format="float"`, and an explicit `dimensions` value for `text-embedding-3` models: [OpenAI embeddings API reference](https://developers.openai.com/api/reference/python/resources/embeddings/methods/create). `text-embedding-3-large` uses `3072` dimensions when not shortened: [OpenAI embeddings guide](https://developers.openai.com/api/docs/guides/embeddings). Store model ID, dimensions, encoding, normalization, sanitized origin, and credential-variable name on each run. Deterministic test adapters use identity `test-double` and never set real-run status.
 
 - [ ] **Step 4: Implement scoped immutable caching and exact search**
 
@@ -1009,7 +1131,7 @@ bin/runner env KG_RUN_REAL_MODELS=true KG_ENABLE_RETRIEVAL_SMOKE=false jupyter n
 bin/runner env KG_ENABLE_RETRIEVAL_SMOKE=false jupyter nbconvert --to notebook --execute --inplace notebooks/02_inspect_knowledge_graph.ipynb
 ```
 
-Expected: reports record actual model IDs, sanitized origins, credential-variable names, request IDs/usage when supplied, all seven Jev probabilities, selected/extracted/failure counts, derived versions, graph counts, and artifact paths without credentials or full raw responses.
+Expected: the embedding report records requested and returned model `text-embedding-3-large`, dimension `3072`, float encoding, token usage, sanitized OpenAI origin, and credential-variable name; the remaining reports record generation/Jev model IDs, request IDs/usage when supplied, all seven Jev probabilities, selected/extracted/failure counts, derived versions, graph counts, and artifact paths without credentials or full raw responses.
 
 - [ ] **Step 8: Perform the small human extraction review**
 
@@ -1071,6 +1193,7 @@ read-only configs/ + corpus/ + fixtures/ + schema/
 - The plan remains limited to KG creation and emits the intermediate `results/kg/` contract for a later hybrid-RAG plan.
 - `configs/`, `corpus/`, `fixtures/`, and `schema/` are read-only at runtime and byte-for-byte/path-for-path unchanged after all workflows.
 - Runtime settings use only the seven named variables, load lazily by stage, map generation to Instructor `openai/<model>`, and sanitize every stored endpoint/credential reference.
+- The official embedding adapter uses `https://api.openai.com/v1`, `text-embedding-3-large`, float encoding, full `3072`-dimension vectors, response-index ordering, finite/dimension validation, and the same function for passage and query embeddings.
 - Application-owned profiles, fixture translation, policy, adapters, prompts, and bundle definitions live under `lib/potency_kg/`.
 - All 24 official sources and 791 normalized records reconcile; unchanged import still holds after reconnect/restart.
 - Every valid version has relational structural graph records. Only active complete versions receive semantic work, and every active passage receives an embedding before skip or Jev decisions.
