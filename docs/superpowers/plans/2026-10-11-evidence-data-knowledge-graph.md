@@ -284,6 +284,60 @@ Composite foreign keys from `assertion`, `entity_mention`, `alias_candidate`, `k
 
 ---
 
+## Execution Stages
+
+Implement the plan as six gated stages. Do not begin a later stage until the current stage's exit gate passes. A stage may contain several tasks because each task remains a reviewable, testable commit; the stage is the larger delivery milestone.
+
+| Stage | Focus | Tasks | Exit artifact or proof |
+|---|---|---|---|
+| 1 | Database schema and initial database load | 1–4 | A migrated relational store containing all 24 official sources and 791 reconciled passage outcomes, with structural graph records and an idempotent restart/re-import result |
+| 2 | Embeddings and index membership | 5 | Immutable scoped embeddings plus a complete, membership-aware index snapshot for every active passage |
+| 3 | Semantic classification, extraction, and materialization | 6–8 | Persisted Jev decisions, validated extraction history, and atomically activated relational semantic graph records |
+| 4 | AGE projection, export, and graph retrieval seam | 9–10 | A validated last-known-good AGE graph, immutable `results/kg/history/` export, promoted `current`, and a bounded traversal trace |
+| 5 | Isolation, correction, and conflict fixtures | 11 | The supplied fixtures run through the ordinary pipeline with preserved stage history and no cross-project leakage |
+| 6 | Operator workflow and final KG verification | 12 | Tested CLI/notebooks/docs, a verified structural run, explicitly enabled real-model results when credentials are available, and unchanged protected inputs |
+
+### Stage 1 gate: database schema and initial database load
+
+Stage 1 is deliberately model-free. It includes only the minimum runtime and contract foundations needed to make the database enforce the system's invariants, followed by schema migration and the first full corpus import.
+
+The stage is complete only when all of the following are true:
+
+- Alembic upgrades a clean PostgreSQL database through revisions `0002` and `0003`.
+- PostgreSQL, rather than application convention alone, rejects cross-project provenance and dangling graph endpoints.
+- The importer creates source versions before passages, activates only complete explicitly current versions, and commits passage rows, structural graph records, processing state, and source-head changes atomically.
+- The official load reconciles exactly 24 manifest sources and 791 normalized passage outcomes, with per-source counts and failures or omissions reported separately.
+- Re-running the import after closing and recreating the engine produces no duplicate sources, passages, graph records, or changed source heads.
+- No embedding, Jev, generation, AGE projection, or model credential is required or invoked.
+- `configs/`, `corpus/`, `fixtures/`, and `schema/` retain the same path/hash set.
+
+Run the Stage 1 gate:
+
+```bash
+bin/runner alembic upgrade head
+bin/runner pytest \
+  tests/test_runtime.py \
+  tests/unit/test_settings.py \
+  tests/unit/test_project_profiles.py \
+  tests/unit/test_contracts.py \
+  tests/unit/test_ids.py \
+  tests/unit/test_redactions.py \
+  tests/unit/test_processing_policy.py \
+  tests/integration/test_database_lifecycle.py \
+  tests/integration/test_migrations.py \
+  tests/integration/test_import.py -v
+```
+
+Expected: every test passes; the import assertions reconcile `24` sources and `791` passage outcomes; restart/re-import is unchanged; injected failures leave no partial source, head, processing, or structural graph state.
+
+### Stage 1 delivery slices
+
+1. **Foundation:** Task 1 establishes the protected, model-free runtime; Task 2 defines the scoped identities and contracts used by constraints and import code.
+2. **Schema:** Task 3 adds the evidence, immutable-run, current-state, and canonical graph tables with database-enforced composite provenance.
+3. **Initial load:** Task 4 performs manifest-first import, creates structural nodes/edges in the same transaction, reconciles the official counts, and proves restart idempotency.
+
+## Stage 1: Database Schema and Initial Database Load
+
 ### Task 1: Runtime, Settings, and Protected-Input Checks
 
 **Files:**
@@ -525,6 +579,12 @@ git add lib/potency_kg/ingest.py lib/potency_kg/graph_store.py tests/integration
 git commit -m "feat: import protected evidence atomically"
 ```
 
+## Stage 2: Embeddings and Membership-Aware Index
+
+**Entry condition:** Stage 1 passed against a clean migrated database and the official import is reconciled.
+
+**Exit gate:** Task 5 tests pass; every complete active passage has exactly one usable embedding binding for the selected embedding version; unchanged reruns make zero adapter calls; and explicit source replacement produces the correct new membership-aware index without losing old history.
+
 ### Task 5: Embedding Cache and Membership-Aware Index
 
 **Files:**
@@ -695,6 +755,12 @@ Expected: all tests pass, including zero adapter calls on unchanged rerun and a 
 git add lib/potency_kg/embedding_client.py lib/potency_kg/embeddings.py tests/integration/test_embeddings.py
 git commit -m "feat: cache scoped embeddings and index membership"
 ```
+
+## Stage 3: Semantic Classification, Extraction, and Materialization
+
+**Entry condition:** Stage 2 produced a complete index snapshot for the active scoped passages.
+
+**Exit gate:** Tasks 6–8 tests pass; every eligible passage has a truthful current processing state; Jev and extraction history is immutable; invalid or partial responses never materialize; and a successful materialization atomically switches the passage's active extraction pointer together with its assertions, entities, edges, and source references.
 
 ### Task 6: Jev Bundle Classification and Selection
 
@@ -884,6 +950,12 @@ git add lib/potency_kg/resolution.py tests/integration/test_materialization.py
 git commit -m "feat: materialize semantic graph atomically"
 ```
 
+## Stage 4: AGE Projection, Export, and Retrieval Seam
+
+**Entry condition:** Stage 3 has a complete relational semantic snapshot, or an explicitly recorded partial policy is selected.
+
+**Exit gate:** Tasks 9–10 tests pass; refresh failure preserves the previous active AGE graph; successful refresh validates before activation; immutable export history is complete before `current` promotion; and graph retrieval reloads exact source text from the scoped relational store while recording seeds, traversed edges, limits, and versions.
+
 ### Task 9: Shadow AGE Projection and Activation
 
 **Files:**
@@ -995,6 +1067,12 @@ git add lib/potency_kg/export.py lib/potency_kg/retrieval.py tests/integration/t
 git commit -m "feat: publish versioned KG artifacts"
 ```
 
+## Stage 5: Isolation, Correction, and Conflict Fixtures
+
+**Entry condition:** The ordinary official-data pipeline can import, embed, classify, extract, materialize, project, retrieve, and export without fixture-specific branches.
+
+**Exit gate:** Task 11 tests pass; same local identifiers remain isolated across projects; explicit correction replaces only the current source head while preserving v1 history; equal-authority conflicting notes remain simultaneously current; and all generated fixture artifacts stay beneath `results/kg/fixtures/`.
+
 ### Task 11: Read-Only Fixture Orchestration
 
 **Files:**
@@ -1054,6 +1132,12 @@ Expected: isolation, correction, conflict, restart, path-resolution, and protect
 git add lib/potency_kg/fixture_catalog.py lib/potency_kg/fixture_runs.py tests/unit/test_fixture_catalog.py tests/integration/test_behavior_graphs.py
 git commit -m "feat: orchestrate supplied fixtures read-only"
 ```
+
+## Stage 6: Operator Workflow and Final KG Verification
+
+**Entry condition:** Stages 1–5 pass through their library interfaces.
+
+**Exit gate:** Task 12 passes the offline suite, structural full-corpus run, protected-input and secret scans, and artifact validation. Real embedding/Jev/generation runs are performed only when explicitly enabled and valid credentials are available; otherwise their status is reported as `not_run`, never as a successful production result.
 
 ### Task 12: CLI, Notebooks, Documentation, and Real-Run Verification
 
