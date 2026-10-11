@@ -2,384 +2,376 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Import the complete supplied corpus into an idempotent relational evidence store, extract a provenance-grounded semantic model, project it into project-isolated Apache AGE graphs, and support vector-seeded graph retrieval back to exact source passages.
+**Goal:** Import and account for the complete supplied corpus, selectively extract a provenance-grounded semantic knowledge graph, preserve all source and extraction history in PostgreSQL, and refresh a project-isolated Apache AGE projection that can be inspected from Jupyter notebooks.
 
-**Architecture:** PostgreSQL relational tables are the durable system of record for source versions, passages, embeddings, model runs, mentions, aliases, assertions, graph nodes, and graph edges. Apache AGE is a reproducible projection of the canonical `kg_node` and `kg_edge` tables, with one AGE graph per tenant/project scope; pgvector stores passage embeddings in the same database. All 791 passages receive deterministic structural treatment, while a corpus-wide relevance policy selects passages for one structured generative extraction pass that also identifies explicit alias claims.
+**Architecture:** Python modules under `lib/potency_kg/` contain all behavior. Two thin notebooks call those modules: one builds the graph stage by stage and explicitly calls `refresh_graph(...)`; the other inspects graph coverage, provenance, and a vector-seeded traversal smoke test. Relational tables are authoritative and preserve history, while AGE is a disposable projection of the current active graph and is rebuilt per project rather than incrementally synchronized.
 
-**Tech Stack:** Python 3.12, Pydantic 2, Instructor, TypeSafe/Jev, SQLAlchemy 2, Psycopg 3, Alembic, PostgreSQL 17, pgvector, Apache AGE, pytest.
+**Tech Stack:** Python 3.12, Pydantic 2, Instructor, TypeSafe/Jev, SQLAlchemy 2, Psycopg 3, Alembic, PostgreSQL 17, pgvector, Apache AGE 1.7, pytest, JupyterLab.
 
-**Spec:** `ASSIGNMENT.md`, `MODEL_ACCESS.md`, `schema/graph-core.json`, `schema/output-contract.json`, and `fixtures/BEHAVIOR_CASES.md`.
+**Spec:** `ASSIGNMENT.md` sections 1–2 and the graph-retrieval portion of section 3; `MODEL_ACCESS.md`; `corpus/README.md`; `corpus/manifest.json`; `schema/graph-core.json`; `schema/output-contract.json`; and `fixtures/BEHAVIOR_CASES.md` for correction/conflict semantics.
 
 ## Global Constraints
 
-- Keep the root `README.md` unchanged unless the user explicitly requests an edit.
+- This plan covers KG generation, inspection, export, and a retrieval smoke test only. It does not implement P1–P6 answers, answer-generation traces, formal evaluation, AWS architecture/costing, or final submission handoff.
+- Put all new documentation in `docs/`. Keep the root `README.md` unchanged.
 - Do not read or modify `docs/scratchpad.md`.
-- Treat `(tenant_id, project_id, source_id, source_version, passage_id)` as passage identity; `passage_id` alone is never globally unique.
-- Import and account for all 791 normalized records and create an inspectable `SourceDocument` representation for every supplied source.
-- Treat raw files as source of truth and `corpus/records.jsonl` as a supplied mechanical extraction.
-- Do not ingest assignment text, questions, schemas, fixture contracts, or generated outputs as FDA evidence.
-- Preserve every source version and prior run artifact; a correction changes the active source head without deleting history.
-- Keep tenant and project in every project-owned relational key, node ID, edge ID, cache key, trace, and graph-selection operation.
-- Never traverse from one project graph into another project graph.
-- Automatically extracted assertions, relationships, and aliases remain `unreviewed` or `pending_review`; model agreement is not human review.
-- Do not merge redacted markers across passages. Redaction identity includes full passage identity and occurrence index.
+- Keep all application behavior in importable modules under `lib/potency_kg/`; notebooks contain orchestration and presentation only.
+- Treat `(tenant_id, project_id, source_id, source_version, passage_id)` as source-passage identity. Preserve the supplied `passage_id` for citations and call the scoped graph identifier `passage_node_id`.
+- Import and reconcile all 791 normalized records and create an inspectable `SourceDocument` representation for all 24 manifest sources.
+- Treat files under `corpus/raw/` as source of truth, `corpus/manifest.json` as the document catalog, and `corpus/records.jsonl` as the supplied mechanical passage extraction.
+- Do not ingest assignment text, questions, schemas, fixture contracts, model-access files, or generated outputs as evidence.
+- Preserve every source version, model run, extraction run, assertion, and graph export. Never rewrite historical provenance.
+- A source version becomes active only after all expected passages for that source validate and import successfully.
+- Keep tenant and project in every project-owned relational key, graph ID, cache key, trace, run record, graph name, and graph-selection operation.
+- Do not reuse embedding-cache entries across projects. A separately authorized shared-public cache is outside this prototype.
+- Never traverse from one project AGE graph into another project graph.
+- Every valid passage receives structural representation and an embedding. Only relevance-selected passages receive semantic extraction.
+- Every passage records one semantic-processing outcome and reason: `structural_only`, `selected`, `extracted`, or `failed`.
+- Relevance selection is corpus-wide and may not use P1–P6 IDs, fixture names, expected answers, or a hand-picked document allowlist.
+- Automatically extracted assertions and relationships remain `unreviewed`; extracted aliases remain `pending_review`. Model agreement is not human review.
+- Trusted configured aliases may merge entities. Pending or rejected aliases may not affect resolution.
+- Assertions are atomic. Every evidence-bearing relation references the local assertion that supports it.
+- Do not create `contradicts` edges unless a passage explicitly states the contradiction. Independently supported opposing assertions remain separate and unresolved.
+- Do not merge redacted markers across passages. Redaction identity includes full scoped passage identity and occurrence index.
 - Do not infer concealed `(b)(4)` content.
-- Apply a corpus-wide semantic selection policy rather than rules keyed to P1-P6, fixture names, or expected answers.
-- Make unchanged re-import, re-embedding, re-extraction, and graph synchronization idempotent.
-- Every evidence-bearing assertion and edge retains exact source references plus extraction actor, version, timestamp, and review state.
-- Use original source text for citations and final evidence. Redaction-substituted text is only an extraction input and is stored separately.
-- Use parameterized SQL for values. AGE graph names and labels are generated only by internal allowlisted functions, never from raw user text.
-- Keep the implementation small: no LangChain, LlamaIndex, NetworkX, generic ontology framework, PDF parser, OCR pipeline, or graph visualization.
+- Use original source text for citations and exported evidence. Redaction-substituted text is stored separately and used only as model input.
+- Make unchanged import, embedding, relevance classification, extraction, materialization, export, and AGE refresh idempotent.
+- Use parameterized SQL for values. AGE graph names and labels come only from internal allowlisted functions and are validated before identifier interpolation.
+- `refresh_graph()` projects only active source heads and active completed extraction runs. Superseded history remains relational and never enters default AGE traversal.
+- Semantic refresh fails by default if any selected passage has an unresolved extraction failure. `allow_partial=True` is an explicit, reported override.
+- Keep the implementation small: no LangChain, LlamaIndex, NetworkX, generic ontology framework, PDF parser, OCR pipeline, graph visualization, or incremental AGE synchronization.
 
 ---
 
 ## Accepted Design Decisions
 
-### Canonical storage and projection
+### Canonical storage and AGE projection
 
-The relational schema is authoritative. `kg_node`, `kg_edge`, and their normalized evidence-reference tables contain the exact graph that must be exported and projected. AGE is rebuilt or incrementally synchronized from those tables and is used for bounded graph traversal. AGE internal vertex and edge IDs are never exposed as stable application identifiers; each vertex and edge carries the logical `node_id` or `edge_id` property.
+Relational `kg_node`, `kg_edge`, and normalized source-reference tables are authoritative. Apache AGE lives in the same PostgreSQL instance but is a query projection, not a second source of truth. `refresh_graph(engine, scope, graph_version, mode, allow_partial)` drops and rebuilds only the internally generated graph for that scope, then validates logical IDs and endpoint integrity. A failed refresh leaves relational data intact and is recoverable by rerunning it.
 
-### Scope and graph boundaries
+### Current state and history
 
-`scope = (tenant_id, project_id)`. One AGE graph is created per scope, using a database-controlled name such as `kg_5c4b15a82e9d`. A `graph_scope` relational table maps the full scope to that generated name. This permits connections across every document in one project and physically prevents graph traversal into another project. Production reuse of shared public evidence is a separately authorized shared scope; it does not justify removing `project_id` from project-owned identities.
+`source_head` selects the active complete version of each logical source. `passage_processing.active_extraction_run_id` selects the single extraction used for current materialization of a passage. Relational history is immutable. The current AGE projection includes only structural records from active source heads and semantic records supported by active passages and active extraction runs. Shared semantic nodes are projected only when at least one current edge or current source reference needs them; projected source references exclude superseded passages.
 
-### Structural versus semantic coverage
+### Structural and semantic coverage
 
-Every valid source and passage creates structural nodes and `contains_passage` edges. Each passage records one semantic-processing outcome: `structural_only`, `selected`, `extracted`, or `failed`. Empty/page-number-only passages may be deterministically classified `structural_only`; all other passages receive the same relevance policy. Only selected passages receive generative semantic extraction.
+The manifest creates every document record before passage import. Every valid passage receives a structural node, a `contains_passage` edge, and an embedding. Empty or page-number-only passages are deterministically `structural_only`. Remaining passages receive the same batched relevance policy. Selected passages receive one passage-local semantic extraction call, with bounded concurrency and versioned caching.
 
-### Extraction and alias resolution
-
-There is one generative extraction pass per selected, unchanged passage. The response contains passage-local entity mentions, assertions, relationships, and only explicitly supported alias claims. Alias resolution is a later deterministic phase over the aggregate extraction output; a second LLM pass is not required. Configuration-supplied identity mappings are trusted as `configured`, LLM-extracted alias claims enter `pending_review`, and only `configured` or human-`approved` aliases participate in automatic merging.
-
-### Entity identity
-
-Identity strategies are registered by entity type:
+### Entity and assertion identity
 
 - `SourceDocument`: scope + source ID + source version.
-- `SourcePassage`: full five-part record identity.
-- `Application`: normalized authoritative identifier such as `STN 125785`.
-- `Product`: configured product ID such as `casgevy`.
-- Redacted entity: full passage identity + redaction occurrence index.
-- Other semantic entities: scope + entity type + compatible product/application context + normalized name, after configured/approved alias lookup.
+- `SourcePassage`: full five-part source identity; the graph ID is `passage_node_id`, while `SourceRef.passage_id` remains the supplied passage ID.
+- `Application`: scope + normalized authoritative identifier such as `STN 125785`.
+- `Product`: scope + configured product ID such as `casgevy`.
+- Redacted entity: full scoped passage identity + redaction occurrence index.
+- Other semantic entities: scope + entity type + compatible product/application context + normalized name after configured/approved alias lookup.
+- Assertion: scope + full passage identity + extractor version + passage-local assertion ID + normalized atomic claim.
+- Structural edge: scope + type + endpoints.
+- Evidence edge: scope + type + endpoints + assertion ID.
 
-Node identity and display labels are separate. A display label may improve without changing the node ID. If two previously materialized name-based entities are later approved as equivalent, retain one canonical node ID and store the other in `entity_redirect`; never silently rewrite historical extraction records.
+Configured aliases map `CASGEVY`, `exagamglogene autotemcel`, and `exa-cel` to the configured product node. Extracted alias claims are inspectable but inactive until approved. If a future approved merge joins materialized entities, retain the deprecated ID in `entity_redirect`; do not rewrite historical extraction responses.
 
-### Edge identity
+### Exact spans and redactions
 
-Structural edge identity is a digest of scope, edge type, source node ID, and target node ID. Evidence-bearing edge identity additionally includes the assertion ID. Reprocessing the same extraction upserts the same edge; a finding from a different passage has a different assertion and therefore remains separately inspectable.
+Extraction uses `model_text`, where supported `(b)(4)` spacing variants are replaced by passage-scoped opaque tokens. Each assertion and relation provides an exact supporting quote. Validation must find that quote deterministically in `model_text`; zero matches or ambiguous matches fail the extraction unless a valid occurrence index disambiguates it. Materialization maps the validated span back to original source offsets and original text before storing provenance.
 
-### Redactions
+### Notebook and CLI roles
 
-The exact `source_text` is immutable. Extraction receives `model_text`, in which variants such as `(b)(4)` and `(b) (4)` become opaque tokens such as `[[REDACTED:r_7fd81a:01]]`. The token maps to tenant, project, source, source version, passage, and occurrence index in `redaction_mention`. The model may classify the role of a redacted mention from surrounding text but may not supply or infer its concealed value.
-
-### Graph seed selection
-
-Graph retrieval embeds the question, retrieves scoped source passages through pgvector, maps those passages to `SourcePassage` graph nodes, and uses adjacent semantic nodes as seeds. It then traverses a declared one- or two-hop neighborhood with node and edge caps, collects evidence references, and reloads original passages from the relational store. This avoids an additional query-entity-linking model while ensuring the graph participates in evidence selection.
+`notebooks/01_build_knowledge_graph.ipynb` exposes the stages and reports counts, failures, selection coverage, and the final explicit `refresh_graph(...)` call. `notebooks/02_inspect_knowledge_graph.ipynb` performs read-only relational/AGE checks and a retrieval smoke test. A minimal CLI calls the same module interfaces for headless reproducibility. Full machine-readable artifacts are written under `results/kg/`; committed notebook output is limited to concise summaries.
 
 ## Planned File Structure
 
 ```text
 requirements.txt
+docker/compose.yaml
 migrations/versions/
   0002_create_evidence_store.py
   0003_create_knowledge_graph_store.py
 lib/potency_kg/
   __init__.py
-  config.py                 # Validated project/model configuration
-  db.py                     # SQLAlchemy engine and transaction helpers
-  contracts.py              # Pydantic import/extraction/graph/retrieval contracts
-  ids.py                    # Scoped stable IDs and AGE graph names
-  redactions.py             # Redaction detection, substitution, and mapping
-  ingest.py                 # JSONL import, source heads, counts, structural records
-  embeddings.py             # Remote embedding adapter, cache, and vector retrieval
-  relevance.py              # Corpus-wide Jev relevance decisions
-  extraction.py             # Instructor extraction and deterministic alias patterns
-  aliases.py                # Alias candidates, review state, and lookup
-  resolution.py             # Mention-to-entity resolution and assertion materialization
-  graph_store.py            # Canonical kg_node/kg_edge writes
-  age_projection.py         # Scoped AGE graph synchronization and validation
-  retrieval.py              # Vector and vector-seeded graph retrieval
-  export.py                 # Required JSON/JSONL graph and import artifacts
-  cli.py                    # Reproducible command entry points
+  config.py
+  contracts.py
+  ids.py
+  redactions.py
+  db.py
+  ingest.py
+  graph_store.py
+  embeddings.py
+  relevance.py
+  extraction.py
+  aliases.py
+  resolution.py
+  age_projection.py
+  retrieval.py
+  export.py
+  cli.py
 prompts/
   relevance-v1.md
   extraction-v1.md
+notebooks/
+  01_build_knowledge_graph.ipynb
+  02_inspect_knowledge_graph.ipynb
 tests/
   conftest.py
   unit/
+    test_contracts.py
     test_ids.py
     test_redactions.py
-    test_extraction_contract.py
+    test_relevance.py
+    test_extraction.py
     test_aliases.py
     test_resolution.py
   integration/
+    test_migrations.py
     test_import.py
     test_embeddings.py
-    test_age_projection.py
-    test_retrieval.py
-    test_behavior_cases.py
+    test_age_refresh.py
+    test_retrieval_smoke.py
     test_exports.py
+    test_cli.py
+docs/
+  kg-generation.md
+results/kg/                  # generated, gitignored
+  import-report.json
+  extraction-coverage.json
+  graph-validation.json
+  graph/nodes.jsonl
+  graph/edges.jsonl
 ```
 
 ## Relational Data Model
 
-The migrations create these tables and constraints:
+The migrations create the following project-scoped tables and constraints:
 
-- `import_run`: run ID, scope, corpus snapshot, status, timestamps, and reconciled counts.
-- `source_document`: scoped source/version identity, metadata, raw path, content metadata, and import run.
-- `source_head`: one active source version per `(tenant, project, source_id)`; corrections update this pointer only.
-- `source_passage`: full record identity, exact text, hash, locator, authority, status, subject scope, and metadata.
-- `embedding_cache`: provider/model/input hash, vector dimension, vector value, usage, and timestamps.
-- `passage_embedding`: scoped passage, embedding-cache row, index version, and active state.
-- `model_run`: provider, model, task, prompt/extractor version, input hash, sanitized usage, elapsed time, status, and error.
-- `passage_processing`: scoped passage, deterministic/relevance decisions, outcome, reasons, and model-run references.
-- `redaction_mention`: scoped passage, occurrence, raw marker, opaque token, character offsets, and contextual role when extracted.
-- `entity_mention`: passage-local mention ID, exact span/text, entity type, context IDs, extraction run, and resolved node ID.
-- `entity_alias`: alias text, normalized alias, relation type, target node, status, provenance, proposer, and review fields.
-- `entity_redirect`: deprecated node ID to canonical node ID with approved merge provenance.
-- `assertion`: stable assertion ID, passage, text, state, authority/status, event date, extraction provenance, and review state.
-- `kg_node`: output-contract node fields plus extraction fields required for evidence-bearing assertions.
-- `kg_node_source_ref`: normalized source references for graph nodes.
-- `kg_edge`: stable edge ID, type, endpoints, status, actor, version, creation time, review state, and assertion ID.
-- `kg_edge_source_ref`: normalized source references for graph edges.
-- `graph_scope`: scope-to-AGE-graph mapping and last synchronized graph version.
-- `graph_sync_run`: desired graph version, counts, validation result, status, and timestamps.
+- `import_run`: run ID, scope, corpus snapshot, manifest/records hashes, status, timestamps, and reconciled counts.
+- `import_error`: run ID, optional source identity, optional supplied passage ID, stage, code, and sanitized detail.
+- `source_document`: scope, source/version identity, manifest metadata, raw path/hash, expected passage count, import completeness, and creating run.
+- `source_head`: one active complete version per `(tenant_id, project_id, source_id)`.
+- `source_passage`: full five-part source identity, `passage_node_id`, exact text/hash, locator, authority, status, subject scope, and metadata.
+- `embedding_cache`: scope, provider, model, dimensions, input hash, vector, usage, and timestamps.
+- `passage_embedding`: full passage identity, cache row, index version, and active state.
+- `model_run`: scope, provider/model, task, prompt/extractor version, input hash, sanitized usage/error, elapsed time, status, and raw validated response JSON.
+- `passage_processing`: full passage identity, deterministic/relevance decisions, outcome/reasons, relevance run, extraction runs, and active extraction run.
+- `redaction_mention`: full passage identity, occurrence, raw marker, opaque token, and original/model offsets.
+- `entity_mention`: extraction run, passage-local ID, exact original span/text, entity type/context, and resolved node ID.
+- `entity_alias`: normalized alias, target node, relation type, status, proposer, exact source reference, evidence quote, and review fields.
+- `entity_redirect`: deprecated node ID, canonical node ID, and approved merge provenance.
+- `assertion`: assertion ID, extraction run, full passage identity, local assertion ID, original supporting quote/offsets, atomic claim, state, authority/status, event date, actor/version/time, and review state.
+- `kg_node`: scoped logical node ID, type, label, attributes, actor/version/time, and review state where evidence-bearing.
+- `kg_node_source_ref`: composite node key plus full source reference and original quote/offsets where applicable.
+- `kg_edge`: scoped edge ID, type, composite endpoint keys, status, assertion ID when evidence-bearing, actor/version/time, and review state.
+- `kg_edge_source_ref`: composite edge key plus full source reference and original quote/offsets.
+- `graph_scope`: scope, generated AGE graph name, last successful graph version, mode, and refresh timestamp.
+- `graph_refresh_run`: scope, graph version, mode, expected/projected counts, validation result, status, errors, and timestamps.
 
-All project-owned primary or unique keys include `tenant_id` and `project_id`, directly or through a stable ID whose digest input includes them. `kg_edge.source_node_id` and `kg_edge.target_node_id` reference `kg_node.node_id`, and database triggers or application validation reject endpoint scope mismatches.
+Use composite foreign keys `(tenant_id, project_id, node_id)` for both edge endpoints. Do not rely on application validation alone for endpoint scope isolation. Partial unique indexes enforce one active passage embedding per index version and one active extraction run per passage.
 
 ---
 
-### Task 1: Add Direct Dependencies and Core Contracts
+### Task 1: Make the Container the Reproducible Runtime
 
 **Files:**
-- Modify: `requirements.txt`
+- Modify: `docker/compose.yaml`
+- Modify: `docker/Dockerfile.notebook`
+- Create: `tests/conftest.py`
+- Create: `tests/test_runtime.py`
 - Create: `lib/potency_kg/__init__.py`
-- Create: `lib/potency_kg/contracts.py`
-- Create: `tests/unit/test_extraction_contract.py`
 
 **Interfaces:**
-- Produces: `Scope`, `SourceRef`, `EntityMentionDraft`, `AliasClaimDraft`, `AssertionDraft`, `RelationDraft`, `PassageExtraction`, `GraphNodeRecord`, and `GraphEdgeRecord` Pydantic models.
-- Consumes: enums and required fields from `schema/graph-core.json` and `schema/output-contract.json`.
+- Produces: a shared Python image and `/workspace` repository mount used by Jupyter, migrations, tests, and CLI commands.
+- Consumes: existing `etc/.env`, `etc/secrets/.env`, PostgreSQL health check, and Alembic configuration.
 
-- [ ] **Step 1: Add pinned direct dependencies**
+- [ ] **Step 1: Add a failing runtime smoke test**
 
-Add these lines while preserving existing pins:
+Create `tests/conftest.py` with a session-scoped database URL fixture assembled from the existing PostgreSQL environment variables. Create `tests/test_runtime.py` with a smoke test that imports `potency_kg` and asserts that `Path("/workspace/ASSIGNMENT.md").is_file()`.
 
-```text
-instructor==1.17.0
-pgvector==0.5.1
-pydantic==2.14.0
-pytest==9.1.1
-tenacity==9.2.1
-typesafe-sdk==0.7.2
-```
+- [ ] **Step 2: Run the test in the current image and verify failure**
 
-- [ ] **Step 2: Write failing contract tests**
+Run: `docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm notebook pytest tests -q`
 
-Test that unknown entity/edge types fail, `review_state` defaults to `unreviewed`, local relation endpoints must exist in the same extraction, and evidence-bearing relations require a non-empty supporting quote.
+Expected: failure because the current image/mount does not expose the complete repository or tests.
 
-```python
-def test_extraction_rejects_unknown_relation_endpoint():
-    with pytest.raises(ValueError, match="unknown local entity"):
-        PassageExtraction.model_validate({
-            "entities": [{"local_id": "e1", "type": "Assay", "text": "TIDE"}],
-            "assertions": [],
-            "relations": [{
-                "source_local_id": "e1",
-                "type": "measures",
-                "target_local_id": "e2",
-                "supporting_quote": "TIDE measures editing frequency",
-            }],
-            "alias_claims": [],
-        })
-```
+- [ ] **Step 3: Add the root mount and headless runner**
 
-- [ ] **Step 3: Run the contract test and verify failure**
+Bind-mount `../:/workspace` read-write for `notebook`, `migrate`, and a new `runner` service so newly created migrations are visible without rebuilding the image. Give `runner` the same image, environment, database dependency, working directory, and `PYTHONPATH=/workspace/lib`, with no long-running default command. Document in a Compose comment that this trusted local-development mount exposes `.git` and `etc/secrets` and is not a production pattern.
 
-Run: `pytest tests/unit/test_extraction_contract.py -v`
+- [ ] **Step 4: Verify imports and test discovery inside the runner**
 
-Expected: import failure because `potency_kg.contracts` does not exist.
+Run: `docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner python -c "import potency_kg; print(potency_kg.__file__)"`
 
-- [ ] **Step 4: Implement the contracts and validators**
+Expected: the printed path begins `/workspace/lib/potency_kg/`.
 
-Use `Literal` values for the agreed node, edge, assertion-state, assay-role, alias-relation, and review-state vocabularies. Extend the supplied edge vocabulary with `mentions`, `contradicts`, `supersedes`, and `supplements`; retain `supersedes_or_supplements` only when importing supplied schema data.
-
-- [ ] **Step 5: Run focused tests**
-
-Run: `pytest tests/unit/test_extraction_contract.py -v`
-
-Expected: all contract tests pass.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add requirements.txt lib/potency_kg/__init__.py lib/potency_kg/contracts.py tests/unit/test_extraction_contract.py
-git commit -m "feat: define evidence extraction contracts"
+git add docker/compose.yaml docker/Dockerfile.notebook lib/potency_kg/__init__.py tests/conftest.py tests/test_runtime.py
+git commit -m "chore: add reproducible KG runner"
 ```
 
-### Task 2: Implement Stable Identities and Redaction Mapping
+### Task 2: Define Contracts, Scoped IDs, and Redaction Spans
 
 **Files:**
+- Create: `lib/potency_kg/contracts.py`
 - Create: `lib/potency_kg/ids.py`
 - Create: `lib/potency_kg/redactions.py`
+- Create: `tests/unit/test_contracts.py`
 - Create: `tests/unit/test_ids.py`
 - Create: `tests/unit/test_redactions.py`
 
 **Interfaces:**
-- Produces: `document_id(scope, source_id, source_version) -> str`, `passage_id(scope, source_id, source_version, local_passage_id) -> str`, `application_id(scope, raw_identifier) -> str`, `configured_product_id(scope, product_id) -> str`, `name_entity_id(scope, entity_type, context_id, normalized_name) -> str`, `edge_id(scope, edge_type, source_id, target_id, assertion_id=None) -> str`, and `graph_name_for_scope(scope) -> str`.
-- Produces: `substitute_redactions(source_ref, text) -> RedactionSubstitution` containing immutable source text, model text, and ordered redaction mappings.
+- Produces: `Scope`, `SourceRef`, `SourcePassageRecord`, `EntityMentionDraft`, `AliasClaimDraft`, `AssertionDraft`, `RelationDraft`, `PassageExtraction`, `GraphNodeRecord`, and `GraphEdgeRecord`.
+- Produces: `document_id`, `passage_node_id`, `application_id`, `configured_product_id`, `name_entity_id`, `assertion_id`, `edge_id`, and `graph_name_for_scope`.
+- Produces: `substitute_redactions(source_ref, text) -> RedactionSubstitution` and `restore_model_span(substitution, start, end) -> OriginalSpan`.
 
-- [ ] **Step 1: Write identity tests**
+- [ ] **Step 1: Write failing contract and identity tests**
 
-Cover deterministic reruns, different project IDs producing different values, STN/BLA spelling normalization, graph names matching `^kg_[a-f0-9]{16}$`, and evidence edge IDs differing by assertion.
+Test unknown types, atomic non-empty assertion claims, relation `assertion_local_id` linkage, local endpoint validation, supporting-quote occurrence validation, default `review_state="unreviewed"`, deterministic scoped IDs, STN/BLA normalization, and graph names matching `^kg_[a-f0-9]{16}$`.
 
-```python
-def test_passage_identity_is_project_scoped():
-    left = passage_id(Scope(tenant_id="t", project_id="p1"), "s", "v", "x")
-    right = passage_id(Scope(tenant_id="t", project_id="p2"), "s", "v", "x")
-    assert left != right
-```
+- [ ] **Step 2: Write failing redaction tests**
 
-- [ ] **Step 2: Write redaction tests**
-
-Verify that `(b)(4)`, `(b) (4)`, and whitespace variants are replaced in `model_text`; source text remains byte-for-byte unchanged; multiple occurrences get distinct tokens; and identical local passage IDs in different projects generate distinct opaque prefixes.
+Cover `(b)(4)`, `(b) (4)`, whitespace variants, multiple occurrences, scope-separated tokens, immutable original text, model-to-original offset restoration, and rejection of concealed-value reconstruction.
 
 - [ ] **Step 3: Run tests and verify failure**
 
-Run: `pytest tests/unit/test_ids.py tests/unit/test_redactions.py -v`
+Run: `pytest tests/unit/test_contracts.py tests/unit/test_ids.py tests/unit/test_redactions.py -v`
 
 Expected: import failures for the missing modules.
 
-- [ ] **Step 4: Implement scoped UUIDv5 or SHA-256 identifiers**
+- [ ] **Step 4: Implement strict contracts and canonical IDs**
 
-Serialize digest inputs as canonical JSON arrays rather than delimiter-joined strings. Prefix IDs with their logical kind, for example `passage:`, `application:`, `product:`, `assertion:`, and `edge:`.
+Use explicit enums derived from the supplied graph core plus `mentions`, `contradicts`, `supersedes`, and `supplements`. Serialize digest inputs as canonical JSON arrays. Keep `SourceRef.passage_id` unchanged and use `passage_node_id` only for the scoped graph identifier.
 
-- [ ] **Step 5: Implement redaction substitution**
+- [ ] **Step 5: Implement reversible redaction substitution**
 
-Use a compiled regex for supported `(b)(4)` spacing variants. Derive the opaque passage token from the full scoped passage identity and append a one-based occurrence index. Store character offsets into original text.
+Store ordered original/model spans for every replacement. `restore_model_span` must return the exact original substring and offsets and must fail when a requested span crosses an unmappable region.
 
-- [ ] **Step 6: Run tests**
+- [ ] **Step 6: Run focused tests**
 
-Run: `pytest tests/unit/test_ids.py tests/unit/test_redactions.py -v`
+Run: `pytest tests/unit/test_contracts.py tests/unit/test_ids.py tests/unit/test_redactions.py -v`
 
-Expected: all tests pass.
+Expected: all focused tests pass.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add lib/potency_kg/ids.py lib/potency_kg/redactions.py tests/unit/test_ids.py tests/unit/test_redactions.py
-git commit -m "feat: add scoped identities and redaction tokens"
+git add lib/potency_kg/contracts.py lib/potency_kg/ids.py lib/potency_kg/redactions.py tests/unit
+git commit -m "feat: define scoped KG contracts and evidence spans"
 ```
 
-### Task 3: Create the Relational Evidence Schema
+### Task 3: Create the Evidence and Graph Schema
 
 **Files:**
 - Create: `migrations/versions/0002_create_evidence_store.py`
 - Create: `migrations/versions/0003_create_knowledge_graph_store.py`
 - Create: `lib/potency_kg/db.py`
-- Create: `tests/integration/test_import.py`
+- Create: `tests/integration/test_migrations.py`
 
 **Interfaces:**
-- Produces: SQLAlchemy engine helpers `create_engine_from_env()`, `transaction(engine)`, and the relational tables listed in this plan.
-- Consumes: the existing `0001_enable_extensions.py` migration.
+- Consumes: `0001_enable_extensions.py`.
+- Produces: `create_engine_from_env()`, `transaction(engine)`, and the tables and composite constraints listed in this plan.
 
-- [ ] **Step 1: Write a migration smoke test**
+- [ ] **Step 1: Write a failing migration smoke test**
 
-The test upgrades an empty test database to `head`, queries `information_schema.tables`, and asserts every planned table exists. It also attempts a duplicate full passage identity and expects the database uniqueness constraint to reject it.
+Upgrade an empty test schema to `head`; assert every planned table exists; reject duplicate full passage identity; reject a `kg_edge` whose endpoint belongs to another project; and reject two active extraction pointers for the same passage.
 
 - [ ] **Step 2: Run the migration test and verify failure**
 
-Run: `pytest tests/integration/test_import.py::test_migrations_create_evidence_schema -v`
+Run: `pytest tests/integration/test_migrations.py -v`
 
-Expected: failure because the tables do not exist.
+Expected: failure because migrations `0002` and `0003` do not exist.
 
-- [ ] **Step 3: Implement `0002_create_evidence_store.py`**
+- [ ] **Step 3: Implement the evidence-store migration**
 
-Create import, source, source-head, embedding, model-run, processing, redaction, mention, alias, redirect, and assertion tables. Use PostgreSQL `JSONB`, timezone-aware timestamps, explicit check constraints for statuses, and `vector` without a fixed dimension so the not-yet-completed access sheet does not have to be guessed.
+Create run, error, source, source-head, passage, scoped embedding, model-run, processing, redaction, mention, alias, redirect, and assertion tables with PostgreSQL `JSONB`, timezone-aware timestamps, explicit status checks, and composite keys.
 
-- [ ] **Step 4: Implement `0003_create_knowledge_graph_store.py`**
+- [ ] **Step 4: Implement the canonical-graph migration**
 
-Create canonical node/edge tables, normalized node/edge evidence-reference tables, graph scope, and graph sync runs. Add endpoint foreign keys and indexes for `(tenant_id, project_id, type)`, logical IDs, active source heads, input hashes, normalized aliases, and passage-vector joins.
+Create graph nodes, edges, normalized source references, graph scope, and graph refresh runs. Use composite endpoint foreign keys and indexes for scope/type, active heads, active extraction runs, normalized aliases, source-reference joins, and embedding lookups.
 
 - [ ] **Step 5: Implement connection helpers**
 
-Set `search_path` explicitly per connection and register pgvector with Psycopg 3. Do not add `apache-age-python`; later AGE operations use Psycopg with parameterized SQL and controlled identifiers.
+Set the relational `search_path` explicitly per connection and register pgvector with Psycopg 3. AGE-specific setup remains inside `age_projection.py` so ordinary relational callers do not depend on AGE session state.
 
 - [ ] **Step 6: Run migrations and tests**
 
 Run: `bin/migrate`
 
-Run: `pytest tests/integration/test_import.py::test_migrations_create_evidence_schema -v`
+Run: `pytest tests/integration/test_migrations.py -v`
 
-Expected: migration succeeds and the schema test passes.
+Expected: migration succeeds and all schema isolation tests pass.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add migrations/versions/0002_create_evidence_store.py migrations/versions/0003_create_knowledge_graph_store.py lib/potency_kg/db.py tests/integration/test_import.py
-git commit -m "feat: add relational evidence and graph schema"
+git add migrations/versions/0002_create_evidence_store.py migrations/versions/0003_create_knowledge_graph_store.py lib/potency_kg/db.py tests/integration/test_migrations.py
+git commit -m "feat: add scoped evidence and graph schema"
 ```
 
-### Task 4: Import Sources, Passages, and Structural Graph Records
+### Task 4: Validate Configuration and Import the Manifest First
 
 **Files:**
 - Create: `lib/potency_kg/config.py`
 - Create: `lib/potency_kg/ingest.py`
 - Create: `lib/potency_kg/graph_store.py`
-- Modify: `tests/integration/test_import.py`
+- Modify: `configs/casgevy-potency.json`
+- Create: `tests/integration/test_import.py`
 
 **Interfaces:**
-- Produces: `load_project_config(path) -> ProjectConfig`, `import_records(engine, config) -> ImportReport`, and `upsert_structural_graph(engine, scope, source_ids) -> GraphWriteReport`.
-- Produces canonical `SourceDocument` and `SourcePassage` rows in `kg_node` plus `contains_passage` rows in `kg_edge`.
+- Produces: `load_project_config(path) -> ProjectConfig`, `preflight_corpus(config) -> CorpusPreflightReport`, `import_corpus(engine, config) -> ImportReport`, and `upsert_structural_graph(engine, scope) -> GraphWriteReport`.
+- Consumes: manifest document counts/hashes, source records, configured aliases, and scoped identity functions.
 
-- [ ] **Step 1: Write import tests using small fixture JSONL files**
+- [ ] **Step 1: Write failing preflight and import tests**
 
-Assert that the first import reports imported rows, the second unchanged import reports zero new rows, source versions remain distinct, project-one records never appear under project-two scope, and the totals reconcile as `imported + unchanged + failed + omitted = input records`.
+For the official corpus, assert manifest/records snapshot and scope agreement, records-file SHA-256, raw-file SHA-256, 24 documents, 791 passages, manifest per-source counts, passage text hashes, and rejection of paths escaping the package root. For synthetic fixtures without a manifest, require an explicit `synthetic=true` descriptor and derive expected per-source counts from only the input JSONL files declared by that fixture. Assert a document row exists even when one of its passages is invalid.
 
-- [ ] **Step 2: Run tests and verify failure**
+- [ ] **Step 2: Write source-activation and idempotency tests**
 
-Run: `pytest tests/integration/test_import.py -v`
+Assert the first import reports imported rows; the second reports unchanged rows; incomplete source versions never become heads; complete explicit replacements advance only their declared source head; historical rows remain; and totals reconcile as `imported + unchanged + failed + omitted = input`.
 
-Expected: failures for missing import functions.
-
-- [ ] **Step 3: Implement configuration validation**
-
-Resolve relative paths against the config file directory. Validate package edition, scope, corpus snapshot, source records, graph schema, and output contract. Model credentials remain environment-only and never enter the validated config dump.
-
-- [ ] **Step 4: Implement streaming JSONL import**
-
-Validate each line independently, group document metadata by scoped source/version, preserve exact passage text and supplied hashes, verify calculated text hashes, write errors without converting them to success, and update `source_head` only after a complete source version imports successfully.
-
-- [ ] **Step 5: Create structural nodes and edges**
-
-Upsert document and passage nodes from relational source rows. Give structural edges actor `system`, version `structural-v1`, review state `unreviewed`, and empty evidence references because they describe storage structure rather than scientific claims.
-
-- [ ] **Step 6: Run fixture and full-corpus preflight tests**
+- [ ] **Step 3: Run tests and verify failure**
 
 Run: `pytest tests/integration/test_import.py -v`
 
-Expected: all fixture tests pass. A read-only preflight over `corpus/records.jsonl` reports 791 valid input lines without changing the database.
+Expected: missing import/configuration functions.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 4: Implement model and project configuration validation**
+
+Resolve project paths against the project-config directory and fixture input paths against the package root. Validate package edition, scope, corpus snapshot, source records, graph schema, output contract, configured product aliases, and model-access file location. Require the manifest for the official corpus; allow its absence only for explicitly synthetic fixture descriptors. Add explicit configured aliases for `CASGEVY`, `exagamglogene autotemcel`, and `exa-cel` to `configs/casgevy-potency.json`. Never include credential values in validated dumps or logs.
+
+- [ ] **Step 5: Implement manifest-first streaming import**
+
+Create document versions from the manifest before reading JSONL. Validate each passage independently, retain explicit failures, and update `source_head` only after imported/unchanged valid passage counts equal the manifest expectation for that source. For fixture replacements, require the declared replacement relationship rather than using issue dates.
+
+- [ ] **Step 6: Materialize structural graph records**
+
+Upsert active document and passage nodes plus `contains_passage` edges. Structural edges use actor `system`, version `structural-v1`, review state `unreviewed`, and empty source references because they describe storage structure rather than scientific claims.
+
+- [ ] **Step 7: Run focused and full-corpus preflight tests**
+
+Run: `pytest tests/integration/test_import.py -v`
+
+Expected: all tests pass; the read-only preflight reports 24 sources and 791 valid normalized records.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add lib/potency_kg/config.py lib/potency_kg/ingest.py lib/potency_kg/graph_store.py tests/integration/test_import.py
-git commit -m "feat: import scoped evidence and structural graph"
+git add configs/casgevy-potency.json lib/potency_kg/config.py lib/potency_kg/ingest.py lib/potency_kg/graph_store.py tests/integration/test_import.py
+git commit -m "feat: import manifest-backed evidence"
 ```
 
-### Task 5: Add Idempotent Embedding Storage and Vector Retrieval
+### Task 5: Embed Every Active Passage with Scoped Caching
 
 **Files:**
 - Create: `lib/potency_kg/embeddings.py`
 - Create: `tests/integration/test_embeddings.py`
 
 **Interfaces:**
-- Produces: `EmbeddingClient.embed(texts: list[str]) -> EmbeddingBatch`, `embed_active_passages(engine, scope, client, index_version) -> EmbeddingReport`, and `vector_search(engine, scope, query_vector, limit) -> list[PassageHit]`.
-- Consumes: completed model-access configuration at runtime; tests use a deterministic fake client.
+- Produces: `EmbeddingClient.embed(texts: list[str]) -> EmbeddingBatch`, `embed_active_passages(engine, scope, client, index_version) -> EmbeddingReport`, and `vector_search(engine, scope, index_version, query_vector, limit) -> list[PassageHit]`.
+- Consumes: completed model-access configuration for real clients; tests use a deterministic fake.
 
-- [ ] **Step 1: Write embedding-cache tests**
+- [ ] **Step 1: Write failing cache and retrieval tests**
 
-Verify finite vectors, consistent dimensions, no repeated client call for the same model/input hash, a new call after passage text or model changes, strict project filtering, and deterministic ranking from the fake client.
+Verify finite vectors, consistent dimensions, batching at configured limits, no repeated call for the same scoped model/input hash, new calls after text/model/project changes, current-source filtering, explicit index-version filtering, and deterministic fake-client ranking.
 
 - [ ] **Step 2: Run tests and verify failure**
 
@@ -387,76 +379,77 @@ Run: `pytest tests/integration/test_embeddings.py -v`
 
 Expected: missing embedding module.
 
-- [ ] **Step 3: Implement the provider-neutral adapter and cache**
+- [ ] **Step 3: Implement the client seam and model-access gate**
 
-The adapter records actual provider/model IDs, batch size, usage when available, elapsed time, retry count, and sanitized errors. Tenacity retries only declared transient failures with bounded exponential backoff. It never retries authentication, invalid input, or exhausted-budget errors.
+Real clients refuse to run unless setup status, model IDs, limits, both verification timestamps, acknowledged constraints, and the required credential environment-variable name are present. Fake clients identify themselves as `test-double` and cannot write a real-run status.
 
-- [ ] **Step 4: Implement scoped vector retrieval**
+- [ ] **Step 4: Implement scoped caching and exact search**
 
-Join through `source_head` so current retrieval cannot mix superseded source versions. Filter tenant and project before ordering by cosine distance. Use exact search for the 791-record POC; do not create a dimension-specific ANN index until model access supplies and verifies the dimension.
+Cache keys include scope, provider, model, dimensions, and input hash. Store vectors without a dimension-specific ANN index; for 791 passages, filter active scoped rows by index version before exact cosine ordering.
 
 - [ ] **Step 5: Run tests**
 
 Run: `pytest tests/integration/test_embeddings.py -v`
 
-Expected: all tests pass.
+Expected: all embedding tests pass without external calls.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add lib/potency_kg/embeddings.py tests/integration/test_embeddings.py
-git commit -m "feat: cache passage embeddings and vector search"
+git commit -m "feat: embed passages with scoped caching"
 ```
 
-### Task 6: Classify Relevance and Extract Structured Semantics Once
+### Task 6: Classify Relevance and Extract Validated Atomic Claims
 
 **Files:**
 - Create: `prompts/relevance-v1.md`
 - Create: `prompts/extraction-v1.md`
 - Create: `lib/potency_kg/relevance.py`
 - Create: `lib/potency_kg/extraction.py`
-- Modify: `tests/unit/test_extraction_contract.py`
+- Create: `tests/unit/test_relevance.py`
+- Create: `tests/unit/test_extraction.py`
 
 **Interfaces:**
-- Produces: `RelevanceClassifier.classify(passage) -> RelevanceDecision`, `extract_passage(passage, model_text, client) -> PassageExtraction`, and `extract_explicit_alias_patterns(text) -> list[AliasClaimDraft]`.
-- The extraction result uses passage-local IDs and never contains global database IDs.
+- Produces: `classify_passages(passages, client, batch_size) -> RelevanceBatch`, `extract_passage(passage, substitution, client) -> PassageExtraction`, and `extract_explicit_alias_patterns(text) -> list[AliasClaimDraft]`.
+- Consumes: model-access limits, scoped model runs, extraction contracts, and reversible redaction mappings.
 
-- [ ] **Step 1: Write tests for corpus-wide selection and explicit alias patterns**
+- [ ] **Step 1: Write failing relevance tests**
 
-Cover page-number-only deterministic skips, multi-label decisions, no question ID in classifier inputs, parenthetical abbreviation extraction, `formerly` relationships, exact supporting spans, and rejection of an alias claim unsupported by the passage.
+Cover deterministic page-number/empty skips, batched multi-label decisions, a persisted reason for every passage, no question IDs or document allowlist in classifier input, and retry behavior only for declared transient failures.
 
-- [ ] **Step 2: Run tests and verify failure**
+- [ ] **Step 2: Write failing extraction tests**
 
-Run: `pytest tests/unit/test_extraction_contract.py -v`
+Cover atomic claims, valid local endpoints, relation-to-assertion linkage, exact unique supporting quotes, occurrence-index disambiguation, original-span restoration, parenthetical abbreviations, `formerly` aliases, redaction non-inference, and rejection of partial invalid output.
 
-Expected: missing relevance and extraction functions.
+- [ ] **Step 3: Run tests and verify failure**
 
-- [ ] **Step 3: Write the versioned relevance prompt**
+Run: `pytest tests/unit/test_relevance.py tests/unit/test_extraction.py -v`
 
-Ask independent typed questions for semantic extraction, potency strategy, assay, measured attribute, regulatory interaction, proposal/request/revision/conclusion, conflict, and redaction. Jev receives fixed choices or boolean decisions; it does not construct graph records.
+Expected: missing relevance/extraction modules.
 
-- [ ] **Step 4: Write the versioned extraction prompt**
+- [ ] **Step 4: Write versioned prompts**
 
-Require exact text spans, local entity IDs, allowed enums, assertion state separate from review state, source-grounded relation quotes, explicit alias relation types (`abbreviation`, `former_name`, `synonym`, `trade_name`, `proper_name`), and no reconstruction of redacted text.
+The relevance prompt asks fixed typed questions about potency strategy, assays, measured attributes, regulatory interactions, proposal/request/revision/conclusion, conflicts, and redactions. The extraction prompt requires allowed enums, passage-local IDs, atomic assertions, relation `assertion_local_id`, exact quotes plus occurrence, explicit alias types, and no reconstruction of redacted text.
 
-- [ ] **Step 5: Implement one-pass structured extraction**
+- [ ] **Step 5: Implement batched relevance and passage-local extraction**
 
-Use Instructor and Pydantic validation. Compute an input hash from full passage identity, model text, prompt version, extractor version, and model ID. Reuse a completed matching run. Persist invalid responses and errors as failed model runs; do not write partial semantic graph records from invalid output.
+Use configurable relevance batches. Extract one selected passage per call with bounded concurrency. Compute input hashes from scope, full passage identity, model text, prompt/extractor version, and model ID. Reuse matching completed runs; preserve invalid responses as failed runs; never materialize partial invalid output.
 
-- [ ] **Step 6: Run tests**
+- [ ] **Step 6: Run unit tests**
 
-Run: `pytest tests/unit/test_extraction_contract.py -v`
+Run: `pytest tests/unit/test_relevance.py tests/unit/test_extraction.py -v`
 
-Expected: all tests pass using fake Jev and generation clients.
+Expected: all tests pass with deterministic fake clients.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add prompts/relevance-v1.md prompts/extraction-v1.md lib/potency_kg/relevance.py lib/potency_kg/extraction.py tests/unit/test_extraction_contract.py
-git commit -m "feat: classify and extract passage semantics"
+git add prompts lib/potency_kg/relevance.py lib/potency_kg/extraction.py tests/unit/test_relevance.py tests/unit/test_extraction.py
+git commit -m "feat: select and extract grounded KG claims"
 ```
 
-### Task 7: Build the Alias Registry and Entity Resolver
+### Task 7: Resolve Aliases and Materialize the Current Semantic Graph
 
 **Files:**
 - Create: `lib/potency_kg/aliases.py`
@@ -465,335 +458,277 @@ git commit -m "feat: classify and extract passage semantics"
 - Create: `tests/unit/test_resolution.py`
 
 **Interfaces:**
-- Produces: `bootstrap_configured_aliases(engine, config)`, `record_alias_candidates(engine, passage, extraction)`, `resolve_mention(engine, scope, mention, context) -> ResolvedEntity`, and `materialize_extraction(engine, passage, extraction) -> MaterializationReport`.
-- Alias lookup uses only `configured` and `approved` rows. `pending_review` rows are visible but inactive.
+- Produces: `bootstrap_configured_aliases`, `record_alias_candidates`, `resolve_mention`, `activate_extraction_run`, and `materialize_extraction`.
+- Consumes: configured CASGEVY aliases, active extraction pointer, exact original spans, and canonical graph writes.
 
-- [ ] **Step 1: Write alias tests**
+- [ ] **Step 1: Write failing alias tests**
 
-Verify configuration maps `CASGEVY` and `exagamglogene autotemcel` to `product:casgevy`; an extracted `exa-cel` candidate remains inactive while pending; approving it makes future mentions resolve to the product; rejected candidates remain inspectable; and no automatic merge occurs from embedding similarity.
+Verify `CASGEVY`, `exagamglogene autotemcel`, and `exa-cel` resolve to one configured product node; extracted aliases remain inactive while pending; rejected aliases remain inspectable; and similarity alone never merges entities.
 
-- [ ] **Step 2: Write resolver tests**
+- [ ] **Step 2: Write failing materialization tests**
 
-Verify resolution priority: authoritative identifier, configured/approved alias, exact normalized name in compatible context, then new entity. Confirm `STN 125785`, `BLA 125785`, and `application 125785` resolve together, while 125785 and 125787 remain distinct. Confirm generic assay names in different product/application contexts do not merge.
+Verify resolution priority, STN/BLA normalization, context-separated generic assay names, deterministic assertion IDs, atomic transaction behavior, evidence edges linked to assertions, immutable prior extraction runs, and a single active extraction run per passage.
 
 - [ ] **Step 3: Run tests and verify failure**
 
 Run: `pytest tests/unit/test_aliases.py tests/unit/test_resolution.py -v`
 
-Expected: missing alias and resolver modules.
+Expected: missing alias/resolution modules.
 
-- [ ] **Step 4: Implement alias bootstrapping and candidate recording**
+- [ ] **Step 4: Implement configured and candidate aliases**
 
-Create configured mappings from the case object without claiming human review. Store pattern- and LLM-derived claims as `pending_review` with exact source references, relation type, proposer, extractor version, and quoted evidence. Provide explicit approve/reject functions requiring reviewer identity and timestamp.
+Bootstrap trusted aliases from project configuration with status `configured`. Store pattern/model claims as `pending_review` with exact source reference, original quote, proposer, and extractor version. Provide approve/reject functions for future use, but no review UI.
 
-- [ ] **Step 5: Implement deterministic normalization and identity strategies**
+- [ ] **Step 5: Implement two-stage materialization**
 
-Normalize with Unicode NFKC, trim and collapse whitespace, lowercase comparison keys, normalize harmless hyphen/space differences, and preserve original observed text. Do not remove scientifically meaningful numbers, units, qualifiers, or application identifiers.
+Resolve and persist all mentions first, then materialize assertions and evidence relations using resolved endpoints. One database transaction commits the complete passage extraction. Activating a newer run changes the current pointer but never deletes prior rows.
 
-- [ ] **Step 6: Implement two-stage materialization**
-
-First resolve/upsert all mentions and persist passage-local-to-global mappings. Then create assertions and relations using the resolved endpoints. A transaction either commits the complete passage extraction or none of its semantic graph records.
-
-- [ ] **Step 7: Run tests**
+- [ ] **Step 6: Run tests**
 
 Run: `pytest tests/unit/test_aliases.py tests/unit/test_resolution.py -v`
 
 Expected: all tests pass.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add lib/potency_kg/aliases.py lib/potency_kg/resolution.py tests/unit/test_aliases.py tests/unit/test_resolution.py
-git commit -m "feat: resolve aliases and semantic entities"
-```
-
-### Task 8: Project the Canonical Graph into Apache AGE
-
-**Files:**
-- Create: `lib/potency_kg/age_projection.py`
-- Create: `tests/integration/test_age_projection.py`
-
-**Interfaces:**
-- Produces: `ensure_scope_graph(connection, scope) -> str`, `sync_scope_graph(engine, scope, graph_version) -> GraphSyncReport`, and `validate_scope_graph(engine, scope) -> GraphValidationReport`.
-- Consumes canonical current `kg_node` and `kg_edge` rows only.
-
-- [ ] **Step 1: Write AGE projection tests**
-
-Assert project sctriplesopes receive distinct graph names, logical node/edge IDs appear as AGE properties, all projected edges have existing endpoints, rerunning sync does not duplicate records, and project-one traversal cannot return project-two fixture values.
-
-- [ ] **Step 2: Run tests and verify failure**
-
-Run: `pytest tests/integration/test_age_projection.py -v`
-
-Expected: missing AGE projection module.
-
-- [ ] **Step 3: Implement safe graph creation**
-
-Generate graph names only through `graph_name_for_scope`. Verify the name against the strict graph-name regex before interpolating it into SQL. Parameterize all property values through AGE's parameter map rather than string-concatenating text into Cypher.
-
-- [ ] **Step 4: Implement idempotent projection**
-
-Load `age`, set `search_path`, create or update vertices by logical `node_id`, then edges by logical `edge_id`. Project source refs and attributes as JSON-compatible properties, keeping large passage text in relational PostgreSQL and storing only lookup/provenance fields in AGE.
-
-- [ ] **Step 5: Implement validation and failure behavior**
-
-Compare expected versus projected node/edge ID sets, detect missing endpoints and cross-scope properties, and mark the sync failed without advancing `graph_scope.last_graph_version` when validation fails.
-
-- [ ] **Step 6: Run tests**
-
-Run: `pytest tests/integration/test_age_projection.py -v`
-
-Expected: all tests pass against the Compose database.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add lib/potency_kg/age_projection.py tests/integration/test_age_projection.py
-git commit -m "feat: project scoped evidence graphs into AGE"
+git add lib/potency_kg/aliases.py lib/potency_kg/resolution.py tests/unit/test_aliases.py tests/unit/test_resolution.py
+git commit -m "feat: resolve and materialize semantic KG records"
 ```
 
-### Task 9: Implement Vector and Vector-Seeded Graph Retrieval
+### Task 8: Rebuild and Validate the Current AGE Graph
+
+**Files:**
+- Create: `lib/potency_kg/age_projection.py`
+- Create: `tests/integration/test_age_refresh.py`
+
+**Interfaces:**
+- Produces: `refresh_graph(engine, scope, graph_version, mode="semantic", allow_partial=False) -> GraphRefreshReport`, `validate_graph(engine, scope) -> GraphValidationReport`, and `graph_counts(engine, scope) -> GraphCounts`.
+- Consumes: active relational graph records only. `mode="structural"` excludes semantic records.
+
+- [ ] **Step 1: Write failing refresh tests**
+
+Assert distinct generated graph names per project, fixed-name validation, logical IDs as AGE properties, no dangling endpoints, no duplicates after repeated refresh, structural-only behavior, semantic failure on unresolved selected passages, explicit partial override reporting, current-head filtering, and project-isolation traversal.
+
+- [ ] **Step 2: Run tests and verify failure**
+
+Run: `pytest tests/integration/test_age_refresh.py -v`
+
+Expected: missing AGE projection module.
+
+- [ ] **Step 3: Implement safe graph rebuilding**
+
+Load AGE and set its required session `search_path` inside the adapter. Resolve graph names only through `graph_name_for_scope` and revalidate the strict regex before interpolation. Drop only that resolved graph, recreate it, create vertices by logical `node_id`, and create edges by logical `edge_id`. Parameterize every property value.
+
+- [ ] **Step 4: Implement current-record selection and validation**
+
+Select structural records through `source_head` and semantic records through active complete extraction runs. Filter projected source references to active passages. Compare expected/projected logical ID sets, endpoint counts, scope properties, and relational/AGE totals. Do not advance `graph_scope.last_graph_version` after failed validation.
+
+- [ ] **Step 5: Run tests**
+
+Run: `pytest tests/integration/test_age_refresh.py -v`
+
+Expected: all AGE refresh tests pass against the Compose database.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add lib/potency_kg/age_projection.py tests/integration/test_age_refresh.py
+git commit -m "feat: refresh current project graphs in AGE"
+```
+
+### Task 9: Export the KG and Prove Vector-Seeded Traversal
 
 **Files:**
 - Create: `lib/potency_kg/retrieval.py`
-- Create: `tests/integration/test_retrieval.py`
-
-**Interfaces:**
-- Produces: `retrieve_vector(request: RetrievalRequest) -> RetrievalTrace` and `retrieve_graph(request: RetrievalRequest) -> RetrievalTrace`.
-- Graph defaults: top 8 vector passage hits, up to 8 adjacent semantic seed nodes, two directed-or-undirected hops as explicitly recorded, maximum 30 nodes, maximum 50 edges, and final evidence packed under the caller's character budget.
-
-- [ ] **Step 1: Write retrieval tests**
-
-Verify vector mode returns only current scoped passages; graph mode records vector passage hits, semantic seed node IDs, traversed edge IDs, traversal limits, and final passage IDs; graph-selected evidence comes only from traversed source references; and identical fixture identifiers in another project never appear.
-
-- [ ] **Step 2: Run tests and verify failure**
-
-Run: `pytest tests/integration/test_retrieval.py -v`
-
-Expected: missing retrieval module.
-
-- [ ] **Step 3: Implement passage-to-seed mapping**
-
-Map vector-hit passage logical IDs to AGE `SourcePassage` vertices. Traverse to supported assertions and adjacent domain entities, rank seed candidates first by best originating vector rank and then by stable node ID, and record the selected seeds before neighborhood expansion.
-
-- [ ] **Step 4: Implement bounded traversal and evidence recovery**
-
-Traverse the declared direction policy and hop count inside the scope graph. Collect evidence references from traversed assertion nodes and evidence-bearing edges. Reload exact current source passages relationally, deduplicate by full passage identity, retain vector scores and graph paths, and pack evidence deterministically.
-
-- [ ] **Step 5: Run tests**
-
-Run: `pytest tests/integration/test_retrieval.py -v`
-
-Expected: all tests pass.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add lib/potency_kg/retrieval.py tests/integration/test_retrieval.py
-git commit -m "feat: add vector-seeded graph retrieval"
-```
-
-### Task 10: Preserve Corrections and Unresolved Conflicts
-
-**Files:**
-- Modify: `lib/potency_kg/ingest.py`
-- Modify: `lib/potency_kg/resolution.py`
-- Create: `tests/integration/test_behavior_cases.py`
-
-**Interfaces:**
-- Extends import with explicit replacement metadata that advances `source_head` while preserving the prior version.
-- Produces `supersedes` edges only from supplied replacement evidence and `contradicts` edges only when independently supported opposing assertions are detected or reviewed.
-
-- [ ] **Step 1: Write source-correction tests**
-
-Import fixture revision 1, capture its graph IDs, import revision 2, and assert: old source/assertion rows remain; current vector and graph retrieval use revision 2 only; the source head points to revision 2; and history exports can still reproduce revision 1 artifacts.
-
-- [ ] **Step 2: Write unresolved-conflict tests**
-
-Import both independent notes and assert both current assertions and evidence references remain, neither source supersedes the other, the conflict is represented without choosing a winner, and issue date alone does not resolve it.
-
-- [ ] **Step 3: Run tests and verify failure**
-
-Run: `pytest tests/integration/test_behavior_cases.py -v`
-
-Expected: correction or conflict assertions fail.
-
-- [ ] **Step 4: Implement source-head changes and semantic state handling**
-
-Advance heads only for explicit replacement relationships. Keep described historical state separate from source-version state. Do not deactivate one independent source merely because another was issued later.
-
-- [ ] **Step 5: Run behavior tests**
-
-Run: `pytest tests/integration/test_behavior_cases.py -v`
-
-Expected: both supplied scenarios pass without special cases keyed to scenario or question IDs.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add lib/potency_kg/ingest.py lib/potency_kg/resolution.py tests/integration/test_behavior_cases.py
-git commit -m "feat: preserve source corrections and conflicts"
-```
-
-### Task 11: Export Inspectable Artifacts and Reconcile Counts
-
-**Files:**
 - Create: `lib/potency_kg/export.py`
+- Create: `tests/integration/test_retrieval_smoke.py`
 - Create: `tests/integration/test_exports.py`
 
 **Interfaces:**
-- Produces: `export_import_report(engine, run_id, output_path)`, `export_graph(engine, scope, graph_version, output_dir)`, and `validate_export(output_dir) -> ExportValidationReport`.
-- Writes `results/import-report.json`, `results/graph/nodes.jsonl`, and `results/graph/edges.jsonl` without making model calls.
+- Produces: `retrieve_graph_smoke(engine, scope, index_version, query_vector, limits) -> RetrievalTrace`, `export_import_report`, `export_extraction_coverage`, `export_graph_validation`, `export_graph`, and `validate_kg_artifacts`.
+- Writes only under caller-supplied output directory, normally `results/kg/`.
 
-- [ ] **Step 1: Write export tests**
+- [ ] **Step 1: Write failing retrieval smoke tests**
 
-Validate all required node/edge fields, normalized source-reference fields, reconciled import totals, 24 document representations, all valid passages structurally represented, no dangling endpoints, and exact scoped passage IDs in citations.
+Verify scoped current vector hits map to `SourcePassage` vertices, semantic seeds come from adjacent current nodes, traversal obeys explicit direction/hop/node/edge caps, selected evidence comes only from traversed source references, exact original passages are reloaded relationally, and another project never appears.
 
-- [ ] **Step 2: Run tests and verify failure**
+- [ ] **Step 2: Write failing export tests**
 
-Run: `pytest tests/integration/test_exports.py -v`
+Validate reconciled totals, 24 document nodes, all valid passage nodes, extraction coverage per source, required node/edge fields, exact supplied passage IDs, citation quotes as exact substrings of the referenced source version, no dangling endpoints, deterministic ordering, and relational-versus-AGE logical ID counts.
 
-Expected: missing export module.
+- [ ] **Step 3: Run tests and verify failure**
 
-- [ ] **Step 3: Implement deterministic exports**
+Run: `pytest tests/integration/test_retrieval_smoke.py tests/integration/test_exports.py -v`
 
-Sort nodes by `(scope, type, id)` and edges by `(scope, type, source, target, id)`. Serialize timestamps in UTC ISO 8601, preserve source-reference arrays, and write through temporary files followed by atomic rename so interrupted exports do not look complete.
+Expected: missing retrieval/export modules.
 
-- [ ] **Step 4: Implement validation**
+- [ ] **Step 4: Implement bounded smoke retrieval**
 
-Validate required fields from the supplied output contract, graph endpoints, extraction coverage per source, omitted/failed reasons, and relational-versus-AGE logical ID counts. Return explicit failures rather than silently dropping invalid rows.
+Use top-eight scoped vector passage hits, up to eight adjacent semantic seeds, at most two explicitly recorded hops, 30 nodes, and 50 edges. Return vector hits, seed IDs, traversed edge IDs, graph paths, and exact original source passages. Do not generate an answer.
 
-- [ ] **Step 5: Run tests**
+- [ ] **Step 5: Implement deterministic atomic exports**
 
-Run: `pytest tests/integration/test_exports.py -v`
+Write `import-report.json`, `extraction-coverage.json`, `graph-validation.json`, `graph/nodes.jsonl`, and `graph/edges.jsonl` through temporary files followed by atomic rename. Sort all records by scoped logical identity and serialize timestamps in UTC ISO 8601.
+
+- [ ] **Step 6: Run tests**
+
+Run: `pytest tests/integration/test_retrieval_smoke.py tests/integration/test_exports.py -v`
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add lib/potency_kg/export.py tests/integration/test_exports.py
-git commit -m "feat: export and validate evidence graph artifacts"
+git add lib/potency_kg/retrieval.py lib/potency_kg/export.py tests/integration/test_retrieval_smoke.py tests/integration/test_exports.py
+git commit -m "feat: export and inspect the generated KG"
 ```
 
-### Task 12: Add Reproducible Pipeline Commands and Final Verification
+### Task 10: Add Thin Notebooks, CLI Commands, and KG Documentation
 
 **Files:**
 - Create: `lib/potency_kg/cli.py`
-- Create: `tests/conftest.py`
-- Modify: `docs/readme.md`
+- Create: `notebooks/01_build_knowledge_graph.ipynb`
+- Create: `notebooks/02_inspect_knowledge_graph.ipynb`
+- Create: `docs/kg-generation.md`
+- Create: `tests/integration/test_cli.py`
 
 **Interfaces:**
-- Produces commands `import`, `embed`, `classify`, `extract`, `resolve`, `sync-graph`, `retrieve`, `export`, and `run-pipeline` through `python -m potency_kg.cli`.
-- `run-pipeline` stops on failed stages, prints run IDs and counts, and reuses unchanged completed work.
+- Produces CLI commands `preflight`, `import`, `embed`, `classify`, `extract`, `materialize`, `refresh-graph`, `export-kg`, `inspect-kg`, and `run-kg` through `python -m potency_kg.cli`.
+- Notebook 01 calls the same stage functions individually and ends with `refresh_graph(...)` plus export.
+- Notebook 02 is read-only and calls graph counts, validation, sample Cypher, and retrieval smoke functions.
 
-- [ ] **Step 1: Write CLI tests with fake model clients**
+- [ ] **Step 1: Write failing CLI orchestration tests**
 
-Assert stage ordering, nonzero exit status on failed validation, run-ID output, idempotent second execution, and no credential values in logs or artifacts.
+In `tests/integration/test_cli.py`, assert stage order, model-access gating, nonzero exit on validation failure, explicit run/version output, idempotent second execution, semantic refresh refusal after extraction failure, structural refresh availability without models, absence of credentials in logs/artifacts, and valid notebook JSON containing imports from `potency_kg` rather than function implementations.
 
-- [ ] **Step 2: Run CLI tests and verify failure**
+- [ ] **Step 2: Run the complete test suite and verify the expected failure**
 
-Run: `pytest tests -v`
+Run: `docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner pytest -v`
 
-Expected: CLI-specific tests fail because the CLI does not exist; completed earlier tests remain green.
+Expected: CLI/notebook-specific tests fail because orchestration is missing; earlier tests remain green.
 
-- [ ] **Step 3: Implement commands and dependency injection**
+- [ ] **Step 3: Implement CLI dependency injection and stage commands**
 
-Each command accepts `--config`, explicit run/version options where applicable, and output paths. Model-backed commands check completed model access before doing paid work. Tests inject deterministic clients rather than contacting external services.
+Each command accepts `--config`; model-backed commands accept explicit index/prompt/extractor versions; refresh accepts `--mode structural|semantic` and `--allow-partial`; export accepts `--output`. `run-kg` stops after the first failed stage and prints every created or reused run ID.
 
-- [ ] **Step 4: Document exact commands**
+- [ ] **Step 4: Create the build notebook**
 
-Add setup, migration, staged pipeline, full-pipeline, fixture, export, and test commands to `docs/readme.md`. Explain that the first real model run begins timed assignment work, while smoke access checks follow `MODEL_ACCESS.md`.
+Add ordered cells for configuration/preflight, engine creation, import, structural graph counts, embedding, relevance, extraction, materialization, `refresh_graph(engine, config.scope, graph_version, mode="semantic", allow_partial=False)`, export, and concise summary tables. Read `KG_RUN_MODEL_STAGES`; when it is false or model access is not ready, skip embedding/relevance/extraction/materialization and call structural refresh instead. Keep credentials and full raw model responses out of cell output.
 
-- [ ] **Step 5: Run local verification**
+- [ ] **Step 5: Create the inspection notebook**
 
-Run: `docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env build notebook`
+Add read-only cells for relational counts by type/source, extraction outcomes, unresolved failures, AGE counts, validation report, a parameterized sample Cypher traversal, and vector-seeded retrieval smoke output showing exact source references.
+
+- [ ] **Step 6: Document exact container commands**
+
+In `docs/kg-generation.md`, document image build/start/migration, notebook URLs, runner commands, model-access prerequisites, structural-only operation, full KG stages, refresh behavior, artifact paths, rerun/idempotency expectations, project isolation, and the trusted root-mount caveat. State the KG-only exclusions explicitly.
+
+- [ ] **Step 7: Run offline verification**
+
+Run: `docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env build`
 
 Run: `bin/start`
 
 Run: `bin/migrate`
 
-Run: `pytest -v`
+Run: `docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner pytest -v`
 
-Expected: image build, migrations, and all offline tests pass. Tests requiring actual configured model access are marked separately and do not masquerade as completed real runs.
+Expected: images build, migrations apply, and all offline tests pass with no external model calls.
 
-- [ ] **Step 6: Verify full-corpus structural import**
+- [ ] **Step 8: Run structural full-corpus verification**
 
 Run:
 
 ```bash
-python -m potency_kg.cli import --config configs/casgevy-potency.json
-python -m potency_kg.cli sync-graph --config configs/casgevy-potency.json --structural-only
-python -m potency_kg.cli export --config configs/casgevy-potency.json --output results
+docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner \
+  python -m potency_kg.cli preflight --config configs/casgevy-potency.json
+docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner \
+  python -m potency_kg.cli import --config configs/casgevy-potency.json
+docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner \
+  python -m potency_kg.cli refresh-graph --config configs/casgevy-potency.json --mode structural
+docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner \
+  python -m potency_kg.cli export-kg --config configs/casgevy-potency.json --output results/kg
 ```
 
-Expected: 791 passage outcomes reconcile, every supplied source has a document node, a repeated import reports unchanged records, and graph validation reports no missing endpoints.
+Expected: 24 sources and 791 passage outcomes reconcile, every valid passage has structural representation, an unchanged re-import reports no duplicates, and graph validation reports no missing endpoints.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Run real semantic verification only after access readiness**
+
+Run:
 
 ```bash
-git add lib/potency_kg/cli.py tests/conftest.py docs/readme.md
-git commit -m "feat: add reproducible evidence graph pipeline"
+docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner \
+  python -m potency_kg.cli run-kg --config configs/casgevy-potency.json --output results/kg
+docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm -e KG_RUN_MODEL_STAGES=true runner \
+  jupyter nbconvert --to notebook --execute --inplace notebooks/01_build_knowledge_graph.ipynb
+docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner \
+  jupyter nbconvert --to notebook --execute --inplace notebooks/02_inspect_knowledge_graph.ipynb
+```
+
+Record actual provider/model IDs, usage, failures, selected/extracted counts, graph counts, and artifact paths in the generated reports and concise notebook summaries. If access is not ready, mark semantic verification `not_run` and execute `docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm -e KG_RUN_MODEL_STAGES=false runner jupyter nbconvert --to notebook --execute --inplace notebooks/01_build_knowledge_graph.ipynb` for structural verification; never substitute fake outputs.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add lib/potency_kg/cli.py notebooks/01_build_knowledge_graph.ipynb notebooks/02_inspect_knowledge_graph.ipynb docs/kg-generation.md tests/integration/test_cli.py
+git commit -m "feat: add notebook-driven KG workflow"
 ```
 
 ## End-to-End Data Flow
 
 ```text
-configs/casgevy-potency.json
-        │
-        ▼
-validate scope and package paths
-        │
-        ▼
-stream corpus/records.jsonl ───────────────┐
-        │                                   │
-        ├─ source_document/source_head      │ preserve exact source versions
-        ├─ source_passage                   │ and immutable source text
-        ├─ structural kg_node/kg_edge       │
-        └─ redaction mappings               │
-        │                                   │
-        ▼                                   │
-embedding cache + passage vectors           │
-        │                                   │
-        ▼                                   │
-deterministic checks + Jev relevance        │
-        │                                   │
-        ▼ selected passages                 │
-Instructor/Pydantic extraction              │ one generative pass
-        │                                   │
-        ├─ mentions                         │
-        ├─ assertions                       │
-        ├─ relations                        │
-        └─ explicit alias candidates        │
-        │                                   │
-        ▼                                   │
-configured/approved alias resolution        │
-        │                                   │
-        ▼                                   │
-canonical kg_node/kg_edge + provenance ◄────┘
-        │
-        ▼
-project-isolated Apache AGE projection
-        │
-        ├─ inspect/export nodes and edges
-        └─ vector passage hits → graph seeds → bounded traversal → exact passages
+corpus/manifest.json + corpus/raw/*
+              │ verify catalog, counts, and hashes
+              ▼
+      source_document versions
+              │
+corpus/records.jsonl ── validate exact text/hash ──► source_passage
+              │                                      │
+              │ complete source only                 ├─ structural kg_node/kg_edge
+              ▼                                      └─ scoped passage embedding
+         source_head                                      │
+              │                                           ▼
+              │                         deterministic skip + batched relevance
+              │                                           │ selected
+              │                                           ▼
+              │                        redaction substitution + one-pass extraction
+              │                                           │
+              │                              mentions/assertions/relations/aliases
+              │                                           │
+              └────────────────────────► configured alias resolution
+                                                          │
+                                                          ▼
+                                          canonical relational kg_node/kg_edge
+                                                          │
+                                             refresh_graph(current scope)
+                                                          │
+                                                          ▼
+                                               disposable AGE projection
+                                                  │               │
+                                                  ├─ export       └─ traversal smoke test
+                                                  ▼
+                                                results/kg/
 ```
 
 ## Completion Criteria
 
-- Database migrations apply cleanly from an empty PostgreSQL instance.
-- First import and unchanged re-import produce truthful reconciled counts.
-- All 791 records are stored or explicitly failed/omitted with reasons.
-- Every supplied source and valid passage has structural graph representation.
-- Embeddings and extraction calls are skipped when their complete versioned inputs are unchanged.
-- Alias extraction and entity resolution require no second generative pass.
-- Pending aliases do not merge entities; configured and human-approved aliases do.
-- Redacted markers have distinct scoped identities and never become inferred values.
-- Semantic assertions from different passages remain separately inspectable.
-- AGE projection matches canonical relational logical IDs and has no dangling endpoints.
-- Project isolation fixtures cannot leak through SQL, vector search, AGE traversal, exports, or traces.
-- Correction fixtures preserve old artifacts while current retrieval uses the replacement version.
-- Conflict fixtures preserve and retrieve both opposing claims without inventing resolution.
-- Graph retrieval records vector passage hits, graph seeds, traversed edge IDs, limits, and final exact source passages.
-- Required graph and import artifacts validate against the supplied output expectations.
-
+- Compose exposes the complete repository at `/workspace` and supplies one headless runner for migrations, tests, CLI, and notebook execution.
+- Migrations apply from an empty database and enforce composite project isolation for graph endpoints.
+- Manifest, records file, raw-source hashes, scope, snapshot, source counts, and passage counts reconcile before import.
+- All 24 sources have document representations and all 791 records have truthful import outcomes.
+- Incomplete source versions never become active heads.
+- Every valid active passage has structural graph representation and a scoped embedding.
+- Every passage has a persisted semantic-processing outcome and reason.
+- Real model stages cannot run without completed access configuration and recorded embedding/generation verification.
+- Selected passages produce validated atomic assertions and assertion-linked relations, or explicit failed outcomes; partial invalid model output is never materialized.
+- Supporting quotes resolve to exact original versioned passage text, including redaction-aware span restoration.
+- Configured CASGEVY aliases resolve to one product; pending aliases never merge entities.
+- Reprocessing unchanged inputs reuses completed embeddings/model runs and does not duplicate graph records.
+- Historical source and extraction rows remain immutable while active pointers determine the current graph.
+- `refresh_graph()` rebuilds only the requested scoped AGE graph, rejects unintended partial semantic refreshes, and validates logical IDs and endpoints before advancing graph version state.
+- Project-isolation fixtures cannot leak through SQL, cache lookup, vector search, AGE traversal, export, or the retrieval smoke trace.
+- Source-correction fixtures keep prior history while the current graph uses only the explicit replacement; conflict fixtures preserve both opposing claims without an invented `contradicts` edge.
+- `results/kg/` contains deterministic import, extraction-coverage, graph-validation, node, and edge artifacts.
+- The two notebooks contain orchestration and concise inspection only; all behavior is exercised through `lib/potency_kg/` interfaces also available to the CLI and tests.
+- The root `README.md` and `docs/scratchpad.md` remain byte-for-byte unchanged.
