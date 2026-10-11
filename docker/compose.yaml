@@ -1,6 +1,6 @@
 services:
   db:
-    image: local-notebook-db:dev
+    image: deffai-db:dev
     build:
       context: ..
       dockerfile: docker/Dockerfile.db
@@ -10,7 +10,7 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - deffai_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
@@ -19,7 +19,7 @@ services:
       start_period: 10s
 
   migrate:
-    image: local-notebook-python:dev
+    image: deffai-python:dev
     build:
       context: ..
       dockerfile: docker/Dockerfile.notebook
@@ -33,7 +33,7 @@ services:
     restart: "no"
 
   notebook:
-    image: local-notebook-python:dev
+    image: deffai-python:dev
     build:
       context: ..
       dockerfile: docker/Dockerfile.notebook
@@ -60,4 +60,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres_data:
+  deffai_postgres_data:

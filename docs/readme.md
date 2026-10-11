@@ -21,7 +21,7 @@ You can also start Compose directly after `bin/install`:
 docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env up --build --detach
 ```
 
-To stop the containers while keeping database data, run `bin/stop`. Run `bin/migrate` to apply migrations on demand. The named `postgres_data` volume is preserved by `bin/stop`.
+To stop the containers while keeping database data, run `bin/stop`. Run `bin/migrate` to apply migrations on demand. The named `deffai_postgres_data` volume is preserved by `bin/stop`.
 
 ## Environment configuration
 
@@ -37,7 +37,7 @@ The default host connection is `postgresql+psycopg://notebook:notebook-local-dev
 - Python 3.12 with pinned notebook and migration dependencies.
 - Alembic migrations enable the `vector` and `age` extensions.
 - The `db` health check gates the one-shot `migrate` service; `notebook` waits until migration succeeds.
-- The database uses the named `postgres_data` volume so its data persists across container stops.
+- The database uses the named `deffai_postgres_data` volume so its data persists across container stops.
 - No application tables, named AGE graphs, ingestion, or production deployment configuration are included.
 
 Put importable Python modules in `lib/` and notebooks in `notebooks/`. Both directories are mounted into `/workspace` in the notebook container, and `lib/` is on `PYTHONPATH`, so host edits are available to notebook kernels immediately.
