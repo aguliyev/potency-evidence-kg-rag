@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env run --rm runner "$@"

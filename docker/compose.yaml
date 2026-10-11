@@ -29,6 +29,14 @@ services:
     env_file:
       - ../etc/.env
       - ../etc/secrets/.env
+    environment:
+      PYTHONPATH: /workspace/lib
+    volumes:
+      - ..:/workspace
+      - ../configs:/workspace/configs:ro
+      - ../corpus:/workspace/corpus:ro
+      - ../fixtures:/workspace/fixtures:ro
+      - ../schema:/workspace/schema:ro
     depends_on:
       db:
         condition: service_healthy
@@ -51,17 +59,44 @@ services:
     env_file:
       - ../etc/.env
       - ../etc/secrets/.env
+    environment:
+      PYTHONPATH: /workspace/lib
     ports:
       - "127.0.0.1:${JUPYTER_HOST_PORT:-8888}:8888"
     volumes:
-      - ../lib:/workspace/lib
-      - ../notebooks:/workspace/notebooks
+      - ..:/workspace
+      - ../configs:/workspace/configs:ro
+      - ../corpus:/workspace/corpus:ro
+      - ../fixtures:/workspace/fixtures:ro
+      - ../schema:/workspace/schema:ro
     depends_on:
       db:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+
+  runner:
+    image: deffai-python:dev
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.notebook
+    working_dir: /workspace
+    env_file:
+      - ../etc/.env
+      - ../etc/secrets/.env
+    environment:
+      PYTHONPATH: /workspace/lib
+    volumes:
+      - ..:/workspace
+      - ../configs:/workspace/configs:ro
+      - ../corpus:/workspace/corpus:ro
+      - ../fixtures:/workspace/fixtures:ro
+      - ../schema:/workspace/schema:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["tools"]
 
 volumes:
   deffai_postgres_data:
