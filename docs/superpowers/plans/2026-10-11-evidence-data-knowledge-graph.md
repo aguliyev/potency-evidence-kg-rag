@@ -519,7 +519,7 @@ git commit -m "feat: resolve aliases and semantic entities"
 
 - [ ] **Step 1: Write AGE projection tests**
 
-Assert project scopes receive distinct graph names, logical node/edge IDs appear as AGE properties, all projected edges have existing endpoints, rerunning sync does not duplicate records, and project-one traversal cannot return project-two fixture values.
+Assert project sctriplesopes receive distinct graph names, logical node/edge IDs appear as AGE properties, all projected edges have existing endpoints, rerunning sync does not duplicate records, and project-one traversal cannot return project-two fixture values.
 
 - [ ] **Step 2: Run tests and verify failure**
 
