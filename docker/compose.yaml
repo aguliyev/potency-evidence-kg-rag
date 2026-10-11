@@ -1,5 +1,6 @@
 services:
   db:
+    container_name: deffai-db
     image: deffai-db:dev
     build:
       context: ..
@@ -19,6 +20,7 @@ services:
       start_period: 10s
 
   migrate:
+    container_name: deffai-migrate
     image: deffai-python:dev
     build:
       context: ..
@@ -33,6 +35,7 @@ services:
     restart: "no"
 
   notebook:
+    container_name: deffai-notebook
     image: deffai-python:dev
     build:
       context: ..
