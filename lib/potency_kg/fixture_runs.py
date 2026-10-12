@@ -190,29 +190,32 @@ def run_kg_fixtures(
     root = output_root.resolve()
     before = dict(protected_input_hashes(catalog.package_root))
     reports: list[FixtureRunReport] = []
-    for configuration in catalog.runs:
-        output_dir = root / configuration.scenario_id / configuration.stage
-        output_dir.mkdir(parents=True, exist_ok=False)
-        descriptor = _write_import_inputs(configuration, output_dir)
-        imported = import_source_version(engine, ImportRequest(descriptor))
-        embeddings = embed_active_passages(engine, configuration.scope, clients.embedding)
-        jev = classify_active_passages(engine, configuration.scope, clients.jev, clients.jev_policy)
-        extraction = extract_selected_passages(
-            engine, configuration.scope, clients.extraction, clients.extraction_concurrency
-        )
-        _materialize_all(engine, extraction)
-        graph = refresh_graph(engine, configuration.scope, mode="semantic")
-        retrieval = retrieve_graph_smoke(
-            engine,
-            configuration.scope,
-            configuration.question or "What supplied fixture evidence is current?",
-            clients.embedding,
-            embeddings.index_version,
-            RetrievalLimits(),
-        )
-        exported = export_graph_version(engine, configuration.scope, output_dir / "kg", graph.graph_version)
-        reports.append(FixtureRunReport(
-            configuration, output_dir, imported, embeddings, jev, extraction, graph, retrieval, exported
-        ))
-    assert_protected_inputs_unchanged(catalog.package_root, before)
-    return FixtureGraphReport(tuple(reports), before, _verify_reconnect(engine, tuple(reports), clients))
+    try:
+        for configuration in catalog.runs:
+            output_dir = root / configuration.scenario_id / configuration.stage
+            output_dir.mkdir(parents=True, exist_ok=False)
+            descriptor = _write_import_inputs(configuration, output_dir)
+            imported = import_source_version(engine, ImportRequest(descriptor))
+            embeddings = embed_active_passages(engine, configuration.scope, clients.embedding)
+            jev = classify_active_passages(engine, configuration.scope, clients.jev, clients.jev_policy)
+            extraction = extract_selected_passages(
+                engine, configuration.scope, clients.extraction, clients.extraction_concurrency
+            )
+            _materialize_all(engine, extraction)
+            graph = refresh_graph(engine, configuration.scope, mode="semantic")
+            retrieval = retrieve_graph_smoke(
+                engine,
+                configuration.scope,
+                configuration.question or "What supplied fixture evidence is current?",
+                clients.embedding,
+                embeddings.index_version,
+                RetrievalLimits(),
+            )
+            exported = export_graph_version(engine, configuration.scope, output_dir / "kg", graph.graph_version)
+            reports.append(FixtureRunReport(
+                configuration, output_dir, imported, embeddings, jev, extraction, graph, retrieval, exported
+            ))
+        reconnect_verified = _verify_reconnect(engine, tuple(reports), clients)
+        return FixtureGraphReport(tuple(reports), before, reconnect_verified)
+    finally:
+        assert_protected_inputs_unchanged(catalog.package_root, before)
