@@ -1,20 +1,98 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
+from typing import Callable
 
+import pytest
+from pydantic import BaseModel
 from sqlalchemy import text
 
 import potency_kg.alias_discovery as alias_discovery
-from potency_kg.alias_discovery import discover_aliases_deterministic
+from potency_kg.alias_discovery import (
+    DEFAULT_ENABLE_LLM_ALIAS_DISCOVERY,
+    MAX_ALIAS_DISCOVERY_CHARACTERS,
+    discover_aliases_deterministic,
+    discover_aliases_llm,
+)
 from potency_kg.aliases import AliasDecision, decide_alias
 from potency_kg.contracts import Scope, ScopedPassageIdentity
 from potency_kg.ingest import ImportRequest, import_source_version
+from potency_kg.llm_client import GenerationClientIdentity, GenerationTransientError
 
 
 SCOPE = Scope("discovery-tenant", "discovery-project")
+
+
+@dataclass
+class _AliasDiscoveryDouble:
+    """Complete in-process provider boundary; all database behavior remains real."""
+
+    responder: Callable[[str], dict[str, object]]
+    attempts: int = 1
+    identity: GenerationClientIdentity = GenerationClientIdentity(
+        provider="deterministic",
+        model="alias-discovery-test",
+        sanitized_origin="https://models.example.test/v1",
+        credential_env="LLM_API_KEY",
+        instructor_mode="openai",
+        max_attempts=3,
+    )
+
+    def __post_init__(self) -> None:
+        self.calls: list[tuple[str, type[BaseModel], str]] = []
+
+    def extract(self, model_text: str, response_model: type[BaseModel], prompt: str) -> BaseModel:
+        self.calls.append((model_text, response_model, prompt))
+        return response_model.model_validate(self.responder(model_text))
+
+    def usage_for_current_thread(self) -> dict[str, int]:
+        return {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+
+    def attempts_for_current_thread(self) -> int:
+        return self.attempts
+
+
+def _insert_llm_document(connection, source_id: str, passages: list[tuple[str, str]]) -> None:
+    connection.execute(text(
+        """INSERT INTO source_document
+           (tenant_id,project_id,source_id,source_version,title,source_sha256,expected_passage_count,status)
+           VALUES (:tenant,:project,:source,'v1',:source,:sha,:count,'final')"""
+    ), {"tenant": SCOPE.tenant_id, "project": SCOPE.project_id, "source": source_id,
+        "sha": f"sha-{source_id}", "count": len(passages)})
+    connection.execute(text(
+        """INSERT INTO source_head (tenant_id,project_id,source_id,source_version)
+           VALUES (:tenant,:project,:source,'v1')"""
+    ), {"tenant": SCOPE.tenant_id, "project": SCOPE.project_id, "source": source_id})
+    for passage_id, body in passages:
+        values = {"tenant": SCOPE.tenant_id, "project": SCOPE.project_id, "source": source_id,
+                  "passage": passage_id, "body": body, "sha": _digest(body.encode())}
+        connection.execute(text(
+            """INSERT INTO source_passage
+               (tenant_id,project_id,source_id,source_version,passage_id,text,text_sha256)
+               VALUES (:tenant,:project,:source,'v1',:passage,:body,:sha)"""
+        ), values)
+        connection.execute(text(
+            """INSERT INTO passage_processing
+               (tenant_id,project_id,source_id,source_version,passage_id,state,reason)
+               VALUES (:tenant,:project,:source,'v1',:passage,'structural_only','eligible_for_processing')"""
+        ), values)
+
+
+def _valid_alias(passage_id: str, quote: str, **changes: object) -> dict[str, object]:
+    item: dict[str, object] = {
+        "alias_value": "exa-cel",
+        "canonical_name": "Exagamglogene autotemcel",
+        "entity_type": "Product",
+        "passage_id": passage_id,
+        "supporting_quote": quote,
+        "occurrence_index": 0,
+        "confidence": 0.91,
+    }
+    item.update(changes)
+    return item
 
 
 def _digest(value: bytes) -> str:
@@ -216,3 +294,181 @@ def test_discovery_rolls_back_a_failed_document_but_continues_with_later_documen
     assert (report.documents, report.succeeded, report.failed, report.reused, report.proposals, report.evidence_inserted) == (2, 1, 1, 0, 1, 1)
     assert runs == [("source-a", "failed"), ("source-b", "succeeded")]
     assert evidence_sources == ["source-b"]
+
+
+def test_llm_discovery_disabled_boundary_skips_database_and_provider(db_engine) -> None:
+    """Opening a run or calling the provider while disabled would violate the explicit cost and credential gate."""
+    client = _AliasDiscoveryDouble(lambda _text: {"aliases": []})
+
+    report = discover_aliases_llm(db_engine, SCOPE, client, enabled=False)
+
+    assert DEFAULT_ENABLE_LLM_ALIAS_DISCOVERY is False
+    assert report.documents == 0 and report.discovery_run_ids == ()
+    assert client.calls == []
+    with db_engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM alias_discovery_run")).scalar_one() == 0
+
+
+def test_llm_discovery_persists_pending_grounded_aliases_and_reuses_successes(db_engine) -> None:
+    """Persisting an approved alias, losing offsets, or repaying an identical successful run must break this test."""
+    quote = "Exagamglogene autotemcel (exa-cel)"
+    with db_engine.begin() as connection:
+        _insert_llm_document(connection, "source-a", [("p1", f"{quote} was evaluated.")])
+    client = _AliasDiscoveryDouble(lambda _text: {"aliases": [_valid_alias("p1", quote)]})
+
+    first = discover_aliases_llm(db_engine, SCOPE, client, enabled=True)
+    repeated = discover_aliases_llm(db_engine, SCOPE, _AliasDiscoveryDouble(lambda _text: {"aliases": []}), enabled=True)
+
+    assert (first.method, first.documents, first.succeeded, first.failed, first.reused, first.proposals, first.evidence_inserted) == (
+        "llm", 1, 1, 0, 0, 1, 1
+    )
+    assert len(client.calls) == 1
+    assert (repeated.succeeded, repeated.failed, repeated.reused, repeated.proposals, repeated.evidence_inserted) == (0, 0, 1, 0, 0)
+    assert repeated.discovery_run_ids == first.discovery_run_ids
+    with db_engine.connect() as connection:
+        alias = connection.execute(text("SELECT status,managed_by,entity_type,canonical_name FROM aliases")).one()
+        evidence = connection.execute(text(
+            "SELECT source_type,passage_id,exact_quote,original_start,original_end FROM alias_evidence"
+        )).one()
+    assert alias == ("pending", "review", "Product", "Exagamglogene autotemcel")
+    assert evidence == ("llm_mined", "p1", quote, 0, len(quote))
+
+
+def test_llm_discovery_splits_large_documents_into_deterministic_overlapping_passage_windows(db_engine, monkeypatch) -> None:
+    """Skipping the overlap or changing window order can lose aliases that sit at a passage boundary."""
+    monkeypatch.setattr(alias_discovery, "MAX_ALIAS_DISCOVERY_CHARACTERS", 45)
+    passages = [("p1", "first text is short."), ("p2", "second text is short."), ("p3", "third text is short.")]
+    with db_engine.begin() as connection:
+        _insert_llm_document(connection, "source-a", passages)
+    client = _AliasDiscoveryDouble(lambda _text: {"aliases": []})
+
+    report = discover_aliases_llm(db_engine, SCOPE, client, enabled=True)
+
+    assert MAX_ALIAS_DISCOVERY_CHARACTERS > 40
+    assert (report.succeeded, report.failed) == (1, 0)
+    rendered_windows = [model_text for model_text, _model, _prompt in client.calls]
+    assert len(rendered_windows) == 2
+    assert "first text is short." in rendered_windows[0]
+    assert "second text is short." in rendered_windows[0]
+    assert "second text is short." in rendered_windows[1]
+    assert "third text is short." in rendered_windows[1]
+
+
+def test_llm_discovery_drops_an_unfit_overlap_and_aggregates_each_window_usage(db_engine, monkeypatch) -> None:
+    """Overlap must not make a bounded multi-passage request oversized, and costs cover every request."""
+    monkeypatch.setattr(alias_discovery, "MAX_ALIAS_DISCOVERY_CHARACTERS", 30)
+    passages = [("p1", "a" * 20), ("p2", "b" * 20)]
+    with db_engine.begin() as connection:
+        _insert_llm_document(connection, "source-a", passages)
+    client = _AliasDiscoveryDouble(lambda _text: {"aliases": []}, attempts=2)
+
+    report = discover_aliases_llm(db_engine, SCOPE, client, enabled=True)
+
+    assert (report.succeeded, report.failed) == (1, 0)
+    assert len(client.calls) == 2
+    assert "b" * 20 not in client.calls[0][0]
+    assert "a" * 20 not in client.calls[1][0]
+    with db_engine.connect() as connection:
+        usage, attempts = connection.execute(text(
+            "SELECT usage,attempts FROM alias_discovery_run WHERE source_id='source-a'"
+        )).one()
+    assert usage == {"completion_tokens": 4, "prompt_tokens": 10, "total_tokens": 14}
+    assert attempts == 4
+
+
+def test_llm_discovery_rejects_a_quote_grounded_to_another_window_before_persisting(db_engine, monkeypatch) -> None:
+    """A provider cannot use a document-level passage ID to smuggle evidence into a different request window."""
+    monkeypatch.setattr(alias_discovery, "MAX_ALIAS_DISCOVERY_CHARACTERS", 30)
+    quote = "Exagamglogene autotemcel (exa-cel)"
+    with db_engine.begin() as connection:
+        _insert_llm_document(connection, "source-a", [("p1", quote), ("p2", "b" * 20)])
+
+    def respond(model_text: str) -> dict[str, object]:
+        return {"aliases": []} if quote in model_text else {"aliases": [_valid_alias("p1", quote)]}
+
+    report = discover_aliases_llm(db_engine, SCOPE, _AliasDiscoveryDouble(respond), enabled=True)
+
+    assert (report.succeeded, report.failed, report.proposals, report.evidence_inserted) == (0, 1, 0, 0)
+    with db_engine.connect() as connection:
+        counts = tuple(connection.execute(text(f"SELECT count(*) FROM {table}")).scalar_one() for table in ("aliases", "alias_evidence"))
+        run = connection.execute(text("SELECT status,error_detail FROM alias_discovery_run")).one()
+    assert counts == (0, 0)
+    assert run == ("failed", "alias discovery failed")
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        _valid_alias("p1", "Exagamglogene autotemcel (exa-cel)", entity_type="Application"),
+        _valid_alias("missing", "Exagamglogene autotemcel (exa-cel)"),
+        _valid_alias("p1", "not an original quote"),
+        _valid_alias("p1", "exa-cel", occurrence_index=None),
+    ],
+    ids=("invalid-entity-type", "unknown-passage", "quote-mismatch", "ambiguous-quote"),
+)
+def test_llm_discovery_rejects_invalid_or_ungrounded_complete_responses_atomically(db_engine, item: dict[str, object]) -> None:
+    """Persisting any proposal before complete response grounding would leave review state partly trusted."""
+    body = "Exagamglogene autotemcel (exa-cel); exa-cel remains under review."
+    with db_engine.begin() as connection:
+        _insert_llm_document(connection, "source-a", [("p1", body)])
+    client = _AliasDiscoveryDouble(lambda _text: {"aliases": [item]})
+
+    report = discover_aliases_llm(db_engine, SCOPE, client, enabled=True)
+
+    assert (report.succeeded, report.failed, report.proposals, report.evidence_inserted) == (0, 1, 0, 0)
+    with db_engine.connect() as connection:
+        counts = tuple(connection.execute(text(f"SELECT count(*) FROM {table}")).scalar_one() for table in ("aliases", "alias_evidence"))
+        run = connection.execute(text("SELECT status,error_detail FROM alias_discovery_run")).one()
+    assert counts == (0, 0)
+    assert run == ("failed", "alias discovery failed")
+
+
+def test_llm_discovery_records_sanitized_transient_exhaustion_without_losing_other_documents(db_engine, capsys) -> None:
+    """Leaking provider detail, rolling back a prior success, or aborting later documents would make failures unsafe."""
+    quote = "Exagamglogene autotemcel (exa-cel)"
+    with db_engine.begin() as connection:
+        _insert_llm_document(connection, "source-a", [("p1", f"{quote} was evaluated.")])
+        _insert_llm_document(connection, "source-b", [("p1", f"{quote} was evaluated.")])
+
+    calls = 0
+
+    def respond(model_text: str) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"aliases": [_valid_alias("p1", quote)]}
+        raise GenerationTransientError("provider failed with TEST_SECRET_SENTINEL")
+
+    report = discover_aliases_llm(db_engine, SCOPE, _AliasDiscoveryDouble(respond, attempts=3), enabled=True)
+
+    captured = capsys.readouterr()
+    assert (report.documents, report.succeeded, report.failed, report.proposals, report.evidence_inserted) == (2, 1, 1, 1, 1)
+    assert "TEST_SECRET_SENTINEL" not in repr(report)
+    assert "TEST_SECRET_SENTINEL" not in captured.out + captured.err
+    with db_engine.connect() as connection:
+        runs = connection.execute(text("SELECT source_id,status,error_detail,attempts FROM alias_discovery_run ORDER BY source_id")).all()
+        evidence_sources = connection.execute(text("SELECT source_id FROM alias_evidence ORDER BY source_id")).scalars().all()
+    assert runs == [("source-a", "succeeded", None, 3), ("source-b", "failed", "alias discovery failed", 3)]
+    assert evidence_sources == ["source-a"]
+
+
+def test_llm_discovery_sanitizes_a_provider_exception_without_partial_commit(db_engine, capsys) -> None:
+    """Raw provider diagnostics must not become persisted history or leave a partially proposed alias behind."""
+    quote = "Exagamglogene autotemcel (exa-cel)"
+    with db_engine.begin() as connection:
+        _insert_llm_document(connection, "source-a", [("p1", f"{quote} was evaluated.")])
+
+    def fail(_model_text: str) -> dict[str, object]:
+        raise RuntimeError("provider exception carrying TEST_SECRET_SENTINEL")
+
+    report = discover_aliases_llm(db_engine, SCOPE, _AliasDiscoveryDouble(fail), enabled=True)
+
+    captured = capsys.readouterr()
+    assert (report.succeeded, report.failed, report.proposals, report.evidence_inserted) == (0, 1, 0, 0)
+    assert "TEST_SECRET_SENTINEL" not in repr(report)
+    assert "TEST_SECRET_SENTINEL" not in captured.out + captured.err
+    with db_engine.connect() as connection:
+        counts = tuple(connection.execute(text(f"SELECT count(*) FROM {table}")).scalar_one() for table in ("aliases", "alias_evidence"))
+        run = connection.execute(text("SELECT status,error_detail FROM alias_discovery_run")).one()
+    assert counts == (0, 0)
+    assert run == ("failed", "alias discovery failed")
