@@ -84,9 +84,66 @@ def load_current_projection(connection: Connection, scope: Scope, mode: Projecti
     ]
     if not document_ids:
         return ProjectionSnapshot(scope, mode, allow_partial, (), ())
-    mode_node_filter = "AND n.node_type IN ('SourceDocument', 'SourcePassage')" if mode == "structural" else ""
-    mode_edge_filter = "AND e.edge_type = 'contains_passage'" if mode == "structural" else ""
     query_params = {**params, "document_ids": document_ids}
+    if mode == "structural":
+        node_mode_filter = "AND n.node_type IN ('SourceDocument', 'SourcePassage')"
+        edge_mode_filter = "AND e.edge_type = 'contains_passage'"
+    else:
+        node_mode_filter = """
+          AND (
+            n.node_type IN ('SourceDocument', 'SourcePassage')
+            OR EXISTS (
+              SELECT 1 FROM assertion AS current_node_assertion
+              JOIN passage_processing AS current_node_processing
+                ON (current_node_processing.tenant_id,current_node_processing.project_id,
+                    current_node_processing.source_id,current_node_processing.source_version,
+                    current_node_processing.passage_id,
+                    current_node_processing.active_extraction_run_id) =
+                   (current_node_assertion.tenant_id,current_node_assertion.project_id,
+                    current_node_assertion.source_id,current_node_assertion.source_version,
+                    current_node_assertion.passage_id,current_node_assertion.extraction_run_id)
+              WHERE (current_node_assertion.tenant_id,current_node_assertion.project_id,
+                     current_node_assertion.assertion_id) =
+                    (n.tenant_id,n.project_id,n.node_id)
+                AND current_node_processing.state='extracted'
+            )
+            OR EXISTS (
+              SELECT 1 FROM kg_edge AS current_edge
+              LEFT JOIN assertion AS current_assertion
+                ON (current_assertion.tenant_id,current_assertion.project_id,current_assertion.assertion_id) =
+                   (current_edge.tenant_id,current_edge.project_id,current_edge.assertion_id)
+              LEFT JOIN passage_processing AS current_processing
+                ON (current_processing.tenant_id,current_processing.project_id,current_processing.source_id,
+                    current_processing.source_version,current_processing.passage_id,
+                    current_processing.active_extraction_run_id) =
+                   (current_assertion.tenant_id,current_assertion.project_id,current_assertion.source_id,
+                    current_assertion.source_version,current_assertion.passage_id,current_assertion.extraction_run_id)
+              WHERE current_edge.tenant_id=n.tenant_id AND current_edge.project_id=n.project_id
+                AND (current_edge.source_node_id=n.node_id OR current_edge.target_node_id=n.node_id)
+                AND (NOT current_edge.is_evidence OR (
+                  current_processing.active_extraction_run_id IS NOT NULL
+                  AND current_processing.state='extracted'
+                ))
+            )
+          )
+        """
+        edge_mode_filter = """
+          AND (
+            NOT e.is_evidence
+            OR EXISTS (
+              SELECT 1 FROM assertion AS current_assertion
+              JOIN passage_processing AS current_processing
+                ON (current_processing.tenant_id,current_processing.project_id,current_processing.source_id,
+                    current_processing.source_version,current_processing.passage_id,
+                    current_processing.active_extraction_run_id) =
+                   (current_assertion.tenant_id,current_assertion.project_id,current_assertion.source_id,
+                    current_assertion.source_version,current_assertion.passage_id,current_assertion.extraction_run_id)
+              WHERE (current_assertion.tenant_id,current_assertion.project_id,current_assertion.assertion_id) =
+                    (e.tenant_id,e.project_id,e.assertion_id)
+                AND current_processing.state='extracted'
+            )
+          )
+        """
     nodes = tuple(
         dict(row)
         for row in connection.execute(
@@ -100,7 +157,7 @@ def load_current_projection(connection: Connection, scope: Scope, mode: Projecti
                      (ref.tenant_id, ref.project_id, ref.source_id, ref.source_version)
                 WHERE n.tenant_id=:tenant_id AND n.project_id=:project_id
                   AND (n.node_id = ANY(:document_ids) OR head.source_id IS NOT NULL)
-                  {mode_node_filter}
+                  {node_mode_filter}
                 ORDER BY n.node_id
             """),
             query_params,
@@ -118,7 +175,7 @@ def load_current_projection(connection: Connection, scope: Scope, mode: Projecti
                   ON (head.tenant_id, head.project_id, head.source_id, head.source_version) =
                      (ref.tenant_id, ref.project_id, ref.source_id, ref.source_version)
                 WHERE e.tenant_id=:tenant_id AND e.project_id=:project_id
-                  {mode_edge_filter}
+                  {edge_mode_filter}
                 ORDER BY e.edge_id
             """),
             params,
