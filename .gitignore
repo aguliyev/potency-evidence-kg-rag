@@ -5,3 +5,4 @@ __pycache__/
 /etc/secrets/*
 !/etc/secrets/.env.example
 .venv/
+graphify-out
