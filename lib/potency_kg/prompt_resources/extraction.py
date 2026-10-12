@@ -23,7 +23,7 @@ TYPE_SCHEMAS: dict[str, dict[str, object]] = {
     "Product": {"required": ("local_id", "name", "supporting_quote")},
     "Application": {"required": ("local_id", "application_id", "supporting_quote")},
     "Indication": {"required": ("local_id", "name", "supporting_quote")},
-    "AliasCandidate": {"required": ("local_id", "candidate", "product_local_id", "supporting_quote")},
+    "AliasCandidate": {"required": ("local_id", "candidate", "target_local_id", "supporting_quote")},
     "PotencyStrategy": {"required": ("local_id", "description", "supporting_quote")},
     "Assay": {"required": ("local_id", "name", "supporting_quote")},
     "MeasuredAttribute": {"required": ("local_id", "name", "supporting_quote")},

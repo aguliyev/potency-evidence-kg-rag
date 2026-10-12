@@ -20,7 +20,6 @@ from .ids import canonical_json, derive_scoped_id
 from .llm_client import StructuredExtractionClient
 from .prompt_resources.alias_discovery import assemble_prompt
 
-
 DETERMINISTIC_ALIAS_DETECTOR = "document-alias-patterns"
 DETERMINISTIC_ALIAS_DETECTOR_VERSION = "document-alias-patterns-v1"
 DEFAULT_ENABLE_LLM_ALIAS_DISCOVERY = False
@@ -209,6 +208,8 @@ def record_alias_proposal(
     model: str | None = None,
     prompt_hash: str | None = None,
     schema_hash: str | None = None,
+    extraction_run_id: UUID | None = None,
+    input_sha256: str | None = None,
 ) -> ProposalPersistence:
     """Persist one pending proposal and its immutable occurrence evidence."""
     if proposal.source.scope != scope:
@@ -252,18 +253,19 @@ def record_alias_proposal(
             "alias_value": proposal.alias_value, "normalized": normalized, **target,
             "normalization_version": ALIAS_NORMALIZATION_VERSION, "confidence": proposal.confidence,
         })
+    evidence_input_hash = input_sha256 or _proposal_input_hash(proposal)
     evidence_id = derive_scoped_id(
         "alias-evidence", scope, alias_id, proposal.source.source_id, proposal.source.source_version,
         proposal.source.passage_id, proposal.detector_name, proposal.detector_version,
-        str(proposal.original_start), str(proposal.original_end), _proposal_input_hash(proposal),
+        str(proposal.original_start), str(proposal.original_end), evidence_input_hash,
     )
     evidence = connection.execute(text(
         """INSERT INTO alias_evidence
            (tenant_id,project_id,evidence_id,alias_id,source_type,source_id,source_version,passage_id,
-            discovery_run_id,exact_quote,original_start,original_end,detector_name,detector_version,
+           discovery_run_id,extraction_run_id,exact_quote,original_start,original_end,detector_name,detector_version,
             model,prompt_hash,schema_hash,input_sha256)
            VALUES (:tenant_id,:project_id,:evidence_id,:alias_id,:source_type,:source_id,:source_version,:passage_id,
-            :discovery_run_id,:exact_quote,:original_start,:original_end,:detector_name,:detector_version,
+            :discovery_run_id,:extraction_run_id,:exact_quote,:original_start,:original_end,:detector_name,:detector_version,
             :model,:prompt_hash,:schema_hash,:input_sha256)
            ON CONFLICT (tenant_id,project_id,evidence_id) DO NOTHING"""
     ), {
@@ -271,10 +273,11 @@ def record_alias_proposal(
         "alias_id": alias_id, "source_type": proposal.source_type, "source_id": proposal.source.source_id,
         "source_version": proposal.source.source_version, "passage_id": proposal.source.passage_id,
         "discovery_run_id": discovery_run_id,
+        "extraction_run_id": extraction_run_id,
         "exact_quote": proposal.exact_quote, "original_start": proposal.original_start,
         "original_end": proposal.original_end, "detector_name": proposal.detector_name,
         "detector_version": proposal.detector_version, "model": model, "prompt_hash": prompt_hash,
-        "schema_hash": schema_hash, "input_sha256": _proposal_input_hash(proposal),
+        "schema_hash": schema_hash, "input_sha256": evidence_input_hash,
     })
     return ProposalPersistence(alias_id, alias_inserted, evidence.rowcount == 1)
 

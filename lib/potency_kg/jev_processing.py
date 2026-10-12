@@ -9,15 +9,24 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from types import MappingProxyType
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from .aliases import approved_alias_catalog
 from .contracts import Scope, ScopedPassageIdentity
-from .ids import canonical_json, derive_jev_response_version, derive_jev_selection_version
-from .jev_client import JevClient, JevResponse, fixed_noul_questions, validate_jev_response
+from .ids import (
+    canonical_json,
+    derive_jev_response_version,
+    derive_jev_selection_version,
+)
+from .jev_client import (
+    JevClient,
+    JevResponse,
+    fixed_noul_questions,
+    validate_jev_response,
+)
 from .processing_policy import BUNDLE_ORDER, JevSelectionPolicy, select_bundles
 from .project_profiles import ProjectProfile, load_project_profile
 from .prompt_resources.jev_bundles import BUNDLE_TO_TYPES, JEV_QUESTIONS
@@ -48,20 +57,25 @@ class _Prepared:
 _PAGE_ONLY = re.compile(r"\s*(?:page\s*)?\d+(?:\s*(?:of|/)\s*\d+)?\s*", re.IGNORECASE)
 
 
-def _profile_for_scope(scope: Scope) -> ProjectProfile:
+def _profile_for_scope(engine: Engine, scope: Scope) -> ProjectProfile:
     root = Path(__file__).resolve().parents[2]
     descriptor = root / "configs" / "casgevy-potency.json"
-    if scope == Scope("public-fda", "casgevy-potency") and descriptor.is_file():
-        return load_project_profile(scope, descriptor)
-    empty_hash = sha256(b"").hexdigest()
-    version = sha256(canonical_json({"name": "empty-v1", "descriptor_sha256": empty_hash, "aliases": {}}).encode()).hexdigest()
-    return ProjectProfile("empty-v1", MappingProxyType({}), "", empty_hash, f"profile-{version}", scope)
+    with engine.connect() as connection:
+        catalog = approved_alias_catalog(connection, scope)
+    return load_project_profile(scope, descriptor, catalog)
 
 
 def _profile_payload(profile: ProjectProfile) -> dict[str, object]:
     return {
         "name": profile.name,
-        "aliases": dict(profile.aliases),
+        "aliases": [
+            {"alias_id": entry.alias_id, "alias_value": entry.alias_value,
+             "normalized_alias": entry.normalized_alias, "entity_type": entry.entity_type,
+             "canonical_key": entry.canonical_key, "canonical_name": entry.canonical_name,
+             "normalization_version": entry.normalization_version}
+            for entry in profile.alias_catalog.entries
+        ],
+        "alias_catalog_version": profile.alias_catalog.version,
         "applications": dict(profile.applications),
         "descriptor_sha256": profile.descriptor_sha256,
         "profile_version": profile.profile_version,
@@ -140,7 +154,13 @@ def _prepare(row: Mapping[str, object], scope: Scope, client: JevClient, profile
     return _Prepared(passage, original, model_text, sha256(model_text.encode()).hexdigest(), response_version)
 
 
-def _cached_response(engine: Engine, item: _Prepared) -> tuple[UUID, JevResponse] | None:
+def _cached_response(
+    engine: Engine,
+    item: _Prepared,
+    profile: ProjectProfile,
+) -> tuple[UUID, JevResponse] | None:
+    """Return a response only when its complete persisted profile snapshot still matches."""
+    payload = _profile_payload(profile)
     with engine.connect() as connection:
         row = connection.execute(
             text(
@@ -149,7 +169,12 @@ def _cached_response(engine: Engine, item: _Prepared) -> tuple[UUID, JevResponse
                 FROM jev_response
                 WHERE (tenant_id,project_id,source_id,source_version,passage_id) =
                       (:tenant,:project,:source_id,:source_version,:passage_id)
-                  AND jev_response_version=:version AND input_sha256=:input_sha256 AND status='succeeded'
+                  AND jev_response_version=:version AND input_sha256=:input_sha256
+                  AND profile_name IS NOT DISTINCT FROM :profile_name
+                  AND profile_aliases=CAST(:profile_aliases AS jsonb)
+                  AND profile_source_sha256 IS NOT DISTINCT FROM :profile_source_sha256
+                  AND profile_version=:profile_version
+                  AND alias_catalog_version=:catalog_version AND status='succeeded'
                 ORDER BY created_at DESC LIMIT 1
                 """
             ),
@@ -161,6 +186,11 @@ def _cached_response(engine: Engine, item: _Prepared) -> tuple[UUID, JevResponse
                 "passage_id": item.passage.passage_id,
                 "version": item.response_version,
                 "input_sha256": item.input_sha256,
+                "profile_name": profile.name,
+                "profile_aliases": json.dumps(payload["aliases"]),
+                "profile_source_sha256": profile.descriptor_sha256,
+                "profile_version": profile.profile_version,
+                "catalog_version": profile.alias_catalog.version,
             },
         ).mappings().one_or_none()
     if row is None:
@@ -213,10 +243,10 @@ def _persist(
                     INSERT INTO jev_response
                       (response_id,tenant_id,project_id,source_id,source_version,passage_id,jev_response_version,
                        model,credential_env,questions,criteria,probabilities,normalization,prompt_hash,bundle_hash,input_sha256,
-                       profile_name,profile_aliases,profile_source_sha256,profile_version,usage,attempts,status,error_detail)
+                       profile_name,profile_aliases,profile_source_sha256,profile_version,alias_catalog_version,usage,attempts,status,error_detail)
                     VALUES (:response_id,:tenant,:project,:source_id,:source_version,:passage_id,:version,
                        :model,:credential,CAST(:questions AS jsonb),CAST(:criteria AS jsonb),'{}',:normalization,:prompt_hash,:bundle_hash,:input_sha256,
-                       :profile_name,CAST(:aliases AS jsonb),:profile_sha,:profile_version,'{}',:attempts,'failed','Jev classification failed')
+                       :profile_name,CAST(:aliases AS jsonb),:profile_sha,:profile_version,:catalog_version,'{}',:attempts,'failed','Jev classification failed')
                     """
                 ),
                 {
@@ -232,9 +262,10 @@ def _persist(
                     "bundle_hash": sha256(canonical_json(BUNDLE_TO_TYPES).encode()).hexdigest(),
                     "input_sha256": item.input_sha256,
                     "profile_name": profile.name,
-                    "aliases": json.dumps(dict(profile.aliases)),
+                    "aliases": json.dumps(_profile_payload(profile)["aliases"]),
                     "profile_sha": profile.descriptor_sha256,
                     "profile_version": profile.profile_version,
+                    "catalog_version": profile.alias_catalog.version,
                     "attempts": getattr(result, "attempts", 1),
                 },
             )
@@ -257,10 +288,10 @@ def _persist(
                     INSERT INTO jev_response
                       (response_id,tenant_id,project_id,source_id,source_version,passage_id,jev_response_version,
                        model,request_id,credential_env,questions,criteria,probabilities,normalization,prompt_hash,bundle_hash,input_sha256,
-                       profile_name,profile_aliases,profile_source_sha256,profile_version,usage,attempts,status)
+                       profile_name,profile_aliases,profile_source_sha256,profile_version,alias_catalog_version,usage,attempts,status)
                     VALUES (:response_id,:tenant,:project,:source_id,:source_version,:passage_id,:version,
                        :model,:request_id,:credential,CAST(:questions AS jsonb),CAST(:criteria AS jsonb),CAST(:probabilities AS jsonb),:normalization,:prompt_hash,:bundle_hash,:input_sha256,
-                       :profile_name,CAST(:aliases AS jsonb),:profile_sha,:profile_version,CAST(:usage AS jsonb),:attempts,'succeeded')
+                       :profile_name,CAST(:aliases AS jsonb),:profile_sha,:profile_version,:catalog_version,CAST(:usage AS jsonb),:attempts,'succeeded')
                     """
                 ),
                 {
@@ -278,9 +309,10 @@ def _persist(
                     "bundle_hash": sha256(canonical_json(BUNDLE_TO_TYPES).encode()).hexdigest(),
                     "input_sha256": item.input_sha256,
                     "profile_name": profile.name,
-                    "aliases": json.dumps(dict(profile.aliases)),
+                    "aliases": json.dumps(_profile_payload(profile)["aliases"]),
                     "profile_sha": profile.descriptor_sha256,
                     "profile_version": profile.profile_version,
+                    "catalog_version": profile.alias_catalog.version,
                     "usage": json.dumps(dict(response.usage or {})),
                     "attempts": response.attempts,
                 },
@@ -364,7 +396,7 @@ def classify_active_passages(
 ) -> JevProcessingReport:
     """Classify eligible passages with bounded one-passage requests and per-passage commits."""
     rows = _active_rows(engine, scope)
-    profile = profile or _profile_for_scope(scope)
+    profile = profile or _profile_for_scope(engine, scope)
     prepared: list[_Prepared] = []
     structural = 0
     for row in rows:
@@ -379,7 +411,7 @@ def classify_active_passages(
     outcomes: dict[_Prepared, tuple[JevResponse | Exception, UUID | None, bool]] = {}
     to_call: list[_Prepared] = []
     for item in prepared:
-        cached = _cached_response(engine, item)
+        cached = _cached_response(engine, item, profile)
         if cached is None:
             to_call.append(item)
         else:

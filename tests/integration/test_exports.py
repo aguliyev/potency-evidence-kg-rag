@@ -6,10 +6,8 @@ from dataclasses import dataclass
 from threading import Event, Thread
 from typing import Sequence
 
-import pytest
-from sqlalchemy import text
-
 import potency_kg.export as export_module
+import pytest
 from potency_kg.age_projection import refresh_graph
 from potency_kg.cli import export_or_reuse_graph
 from potency_kg.contracts import Scope, ScopedSourceVersion
@@ -23,7 +21,7 @@ from potency_kg.export import (
 )
 from potency_kg.graph_store import write_structural_version
 from potency_kg.ids import derive_scoped_id
-
+from sqlalchemy import text
 
 SCOPE = Scope("tenant", "export")
 
@@ -273,10 +271,10 @@ def test_semantic_correction_exports_only_active_exact_entity_mentions(db_engine
                        (extraction_run_id,tenant_id,project_id,source_id,source_version,passage_id,
                         extraction_version,model,sanitized_origin,credential_env,instructor_mode,
                         selected_bundles,input_sha256,profile_name,profile_aliases,
-                        profile_source_sha256,profile_version,status,response)
+                        profile_source_sha256,profile_version,alias_catalog_version,status,response)
                        VALUES (:run_id,:tenant,:project,'source',:version,'p1',:extraction_version,
                         'model','https://invalid','KEY','openai','["product_context"]',:input_sha,
-                        'empty-v1','{}','profile-sha','profile-v1','succeeded','{}')"""
+                        'empty-v1','[]','profile-sha','profile-v1','approved-alias-catalog-v1-export','succeeded','{}')"""
                 ),
                 {**params, "extraction_version": f"extraction-{version}", "input_sha": f"input-{version}"},
             )

@@ -31,7 +31,10 @@ def test_each_version_changes_with_its_declared_input() -> None:
     assert derive_index_version(embedding, [(passage, "text-hash")]) != derive_index_version(embedding, [(passage, "other")])
     profile = {
         "name": "official",
-        "aliases": {"Alias": "product"},
+        "aliases": [
+            {"alias_id": "alias-1", "alias_value": "Alias", "normalized_alias": "alias", "entity_type": "Product", "canonical_key": "product", "canonical_name": "Product", "normalization_version": "nfkc-casefold-whitespace-v1"},
+        ],
+        "alias_catalog_version": "approved-alias-catalog-v1-a",
         "descriptor_sha256": "descriptor",
         "profile_version": "profile",
     }
@@ -45,15 +48,16 @@ def test_each_version_changes_with_its_declared_input() -> None:
         "profile": profile,
     }
     response = derive_jev_response_version(**response_inputs)
-    for key, changed in {
-        "model": "other-model",
-        "questions": {"q": {"question": "other", "criterion": "c"}},
-        "redacted_input": "other text",
-        "normalization": "redaction-v2",
-        "prompt_hash": "other-prompt",
-        "bundle_hash": "other-bundle",
-        "profile": {**profile, "aliases": {"Other": "product"}},
-    }.items():
+    for key, changed in (
+        ("model", "other-model"),
+        ("questions", {"q": {"question": "other", "criterion": "c"}}),
+        ("redacted_input", "other text"),
+        ("normalization", "redaction-v2"),
+        ("prompt_hash", "other-prompt"),
+        ("bundle_hash", "other-bundle"),
+        ("profile", {**profile, "aliases": [{**profile["aliases"][0], "canonical_key": "other-product"}]}),
+        ("profile", {**profile, "alias_catalog_version": "approved-alias-catalog-v1-b"}),
+    ):
         assert response != derive_jev_response_version(**{**response_inputs, key: changed})
     selection = derive_jev_selection_version(response, {"product_context": 0.5})
     assert selection != derive_jev_selection_version(response, {"product_context": 0.6})
@@ -67,15 +71,16 @@ def test_each_version_changes_with_its_declared_input() -> None:
         "profile": profile,
     }
     extraction = derive_extraction_version(**extraction_inputs)
-    for key, changed in {
-        "model": "other-model",
-        "instructor_mode": "other-mode",
-        "selected_bundles": ["assay_evidence"],
-        "prompt_hash": "other-prompt",
-        "schema_hash": "other-schema",
-        "normalization": "redaction-v2",
-        "profile": {**profile, "descriptor_sha256": "other-descriptor"},
-    }.items():
+    for key, changed in (
+        ("model", "other-model"),
+        ("instructor_mode", "other-mode"),
+        ("selected_bundles", ["assay_evidence"]),
+        ("prompt_hash", "other-prompt"),
+        ("schema_hash", "other-schema"),
+        ("normalization", "redaction-v2"),
+        ("profile", {**profile, "descriptor_sha256": "other-descriptor"}),
+        ("profile", {**profile, "alias_catalog_version": "approved-alias-catalog-v1-b"}),
+    ):
         assert extraction != derive_extraction_version(**{**extraction_inputs, key: changed})
     graph = derive_graph_version(
         Scope("tenant", "project"),

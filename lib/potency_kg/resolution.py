@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -12,22 +11,21 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
+from .alias_discovery import AliasProposal, record_alias_proposal
+from .aliases import AliasCatalog, approved_alias_catalog, normalize_alias
 from .contracts import Scope, ScopedPassageIdentity
 from .extraction import build_response_model
 from .ids import canonical_json, derive_extraction_version, derive_scoped_id
-from .prompt_resources.extraction import assemble_prompt
 from .project_profiles import (
-    ProjectProfile,
     trusted_applications_for_profile,
     trusted_descriptor_path_for_profile,
 )
+from .prompt_resources.extraction import assemble_prompt
 
 
 @dataclass(frozen=True)
-class AliasBootstrapReport:
-    product_count: int
+class ApplicationBootstrapReport:
     application_count: int
-    alias_count: int
 
 
 @dataclass(frozen=True)
@@ -42,8 +40,14 @@ class EntityMentionDraft:
     attributes: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.local_id.strip() or not self.entity_type.strip() or not self.text.strip():
-            raise ValueError("entity mention needs nonempty local identity, type, and text")
+        if (
+            not self.local_id.strip()
+            or not self.entity_type.strip()
+            or not self.text.strip()
+        ):
+            raise ValueError(
+                "entity mention needs nonempty local identity, type, and text"
+            )
         if not self.original_quote:
             raise ValueError("entity mention needs an exact original quote")
 
@@ -52,6 +56,7 @@ class EntityMentionDraft:
 class ResolvedEntity:
     node_id: str
     node_type: str
+    canonical_key: str
     canonical_name: str
     matched_by: str
 
@@ -62,7 +67,7 @@ class MaterializationReport:
     extraction_run_id: UUID
     previous_active_extraction_run_id: UUID | None
     mentions: int
-    alias_candidates: int
+    alias_proposals: int
     assertions: int
     evidence_edges: int
 
@@ -79,65 +84,42 @@ _ENTITY_VALUE_FIELDS: dict[str, str] = {
 }
 
 
-def _normalized(value: str) -> str:
-    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
-
-
-def _profile_scope(profile: ProjectProfile) -> Scope:
-    if profile.scope is None:
-        raise ValueError("project profile must carry its tenant/project scope")
-    return profile.scope
-
-
-def bootstrap_profile_aliases(
-    connection: Connection,
-    profile: ProjectProfile,
-) -> AliasBootstrapReport:
-    """Create canonical Product anchors from trusted profile aliases only."""
-    scope = _profile_scope(profile)
-    grouped: dict[str, list[str]] = {}
-    for alias, canonical_id in profile.aliases.items():
-        if not alias.strip() or not canonical_id.strip():
-            raise ValueError("trusted profile aliases must be nonempty")
-        grouped.setdefault(canonical_id, []).append(alias)
-    for canonical_id, aliases in grouped.items():
-        node_id = derive_scoped_id("product", scope, canonical_id)
-        attributes = {
-            "canonical_id": canonical_id,
-            "name": aliases[0],
-            "trusted_aliases": aliases,
-            "profile_name": profile.name,
-            "profile_version": profile.profile_version,
-            "profile_source_path": profile.descriptor_path,
-            "profile_source_sha256": profile.descriptor_sha256,
-            "system_generated": True,
+def _catalog_entries(catalog: AliasCatalog) -> list[dict[str, str]]:
+    return [
+        {
+            "alias_id": entry.alias_id,
+            "alias_value": entry.alias_value,
+            "normalized_alias": entry.normalized_alias,
+            "entity_type": entry.entity_type,
+            "canonical_key": entry.canonical_key,
+            "canonical_name": entry.canonical_name,
+            "normalization_version": entry.normalization_version,
         }
-        connection.execute(
-            text(
-                """INSERT INTO kg_node (tenant_id,project_id,node_id,node_type,attributes)
-                   VALUES (:tenant,:project,:node_id,'Product',CAST(:attributes AS jsonb))
-                   ON CONFLICT (tenant_id,project_id,node_id) DO UPDATE
-                   SET attributes=EXCLUDED.attributes
-                   WHERE kg_node.node_type='Product'"""
-            ),
-            {
-                "tenant": scope.tenant_id,
-                "project": scope.project_id,
-                "node_id": node_id,
-                "attributes": json.dumps(attributes),
-            },
-        )
-    for application_id, canonical_id in profile.applications.items():
+        for entry in catalog.entries
+    ]
+
+
+def bootstrap_profile_applications(
+    connection: Connection,
+    scope: Scope,
+    *,
+    profile_name: str,
+    profile_version: str,
+    profile_source_sha256: str,
+) -> ApplicationBootstrapReport:
+    """Create the profile's stable Application anchors without consulting aliases."""
+    applications = trusted_applications_for_profile(profile_name)
+    for application_id, canonical_id in applications.items():
         if not application_id.strip() or not canonical_id.strip():
             raise ValueError("trusted profile applications must be nonempty")
         node_id = derive_scoped_id("application", scope, canonical_id)
         attributes = {
             "canonical_id": canonical_id,
             "application_id": application_id,
-            "profile_name": profile.name,
-            "profile_version": profile.profile_version,
-            "profile_source_path": profile.descriptor_path,
-            "profile_source_sha256": profile.descriptor_sha256,
+            "profile_name": profile_name,
+            "profile_version": profile_version,
+            "profile_source_path": trusted_descriptor_path_for_profile(profile_name),
+            "profile_source_sha256": profile_source_sha256,
             "system_generated": True,
         }
         connection.execute(
@@ -155,42 +137,82 @@ def bootstrap_profile_aliases(
                 "attributes": json.dumps(attributes),
             },
         )
-    return AliasBootstrapReport(len(grouped), len(profile.applications), len(profile.aliases))
+    return ApplicationBootstrapReport(len(applications))
+
+
+def _resolve_profile_application(
+    scope: Scope,
+    mention: EntityMentionDraft,
+    profile_name: str,
+) -> ResolvedEntity | None:
+    if mention.entity_type != "Application":
+        return None
+    canonical_id = trusted_applications_for_profile(profile_name).get(
+        mention.text.strip()
+    )
+    if canonical_id is None:
+        return None
+    return ResolvedEntity(
+        derive_scoped_id("application", scope, canonical_id),
+        "Application",
+        canonical_id,
+        canonical_id,
+        "trusted_profile_application",
+    )
 
 
 def resolve_mention(
     connection: Connection,
     scope: Scope,
     mention: EntityMentionDraft,
-    profile: ProjectProfile,
+    catalog: AliasCatalog,
 ) -> ResolvedEntity:
-    """Resolve exact trusted Product aliases; never similarity-merge extracted text."""
-    if mention.source_ref.scope != scope or _profile_scope(profile) != scope:
-        raise ValueError("entity resolution requires matching full tenant/project scope")
-    bootstrap_profile_aliases(connection, profile)
-    trusted = {
-        _normalized(alias): canonical_id
-        for alias, canonical_id in profile.aliases.items()
-    }
-    canonical_id = trusted.get(_normalized(mention.text)) if mention.entity_type == "Product" else None
-    if canonical_id is not None:
-        return ResolvedEntity(
-            derive_scoped_id("product", scope, canonical_id),
-            "Product",
-            canonical_id,
-            "trusted_profile_alias",
+    """Resolve exact approved typed aliases; never similarity-merge extracted text."""
+    if mention.source_ref.scope != scope or catalog.scope != scope:
+        raise ValueError(
+            "entity resolution requires matching full tenant/project scope"
         )
-    application_id = (
-        profile.applications.get(mention.text.strip())
-        if mention.entity_type == "Application"
-        else None
+    match = next(
+        (
+            entry
+            for entry in catalog.entries
+            if entry.entity_type == mention.entity_type
+            and entry.normalized_alias == normalize_alias(mention.text)
+        ),
+        None,
     )
-    if application_id is not None:
+    if match is not None:
+        node_id = derive_scoped_id(
+            "entity", scope, match.entity_type, match.canonical_key
+        )
+        attributes = {
+            "canonical_key": match.canonical_key,
+            "canonical_name": match.canonical_name,
+            "alias_id": match.alias_id,
+            "alias_catalog_version": catalog.version,
+            "normalization_version": match.normalization_version,
+            "system_generated": True,
+        }
+        connection.execute(
+            text(
+                """INSERT INTO kg_node (tenant_id,project_id,node_id,node_type,attributes)
+            VALUES (:tenant,:project,:node_id,:node_type,CAST(:attributes AS jsonb))
+            ON CONFLICT (tenant_id,project_id,node_id) DO UPDATE SET attributes=EXCLUDED.attributes"""
+            ),
+            {
+                "tenant": scope.tenant_id,
+                "project": scope.project_id,
+                "node_id": node_id,
+                "node_type": match.entity_type,
+                "attributes": json.dumps(attributes),
+            },
+        )
         return ResolvedEntity(
-            derive_scoped_id("application", scope, application_id),
-            "Application",
-            application_id,
-            "trusted_profile_application",
+            node_id,
+            match.entity_type,
+            match.canonical_key,
+            match.canonical_name,
+            "approved_alias",
         )
 
     node_id = derive_scoped_id(
@@ -205,16 +227,16 @@ def resolve_mention(
     )
     attributes = {
         "canonical_name": mention.text,
-        "extraction_run_id": str(mention.extraction_run_id) if mention.extraction_run_id else None,
+        "extraction_run_id": (
+            str(mention.extraction_run_id) if mention.extraction_run_id else None
+        ),
         "extraction_version": mention.extraction_version,
         **dict(mention.attributes),
     }
     connection.execute(
-        text(
-            """INSERT INTO kg_node (tenant_id,project_id,node_id,node_type,attributes)
+        text("""INSERT INTO kg_node (tenant_id,project_id,node_id,node_type,attributes)
                VALUES (:tenant,:project,:node_id,:node_type,CAST(:attributes AS jsonb))
-               ON CONFLICT (tenant_id,project_id,node_id) DO NOTHING"""
-        ),
+               ON CONFLICT (tenant_id,project_id,node_id) DO NOTHING"""),
         {
             "tenant": scope.tenant_id,
             "project": scope.project_id,
@@ -223,7 +245,13 @@ def resolve_mention(
             "attributes": json.dumps(attributes),
         },
     )
-    return ResolvedEntity(node_id, mention.entity_type, mention.text, "new_entity")
+    return ResolvedEntity(
+        node_id,
+        mention.entity_type,
+        normalize_alias(mention.text),
+        mention.text,
+        "new_entity",
+    )
 
 
 def _params(passage: ScopedPassageIdentity) -> dict[str, object]:
@@ -241,18 +269,20 @@ def _matching_active_extraction(
     passage: ScopedPassageIdentity,
     extraction_run_id: UUID,
 ) -> Mapping[str, object] | None:
-    row = connection.execute(
-        text(
-            """SELECT run.extraction_version,run.model,run.instructor_mode,
+    row = (
+        connection.execute(
+            text(
+                """SELECT run.extraction_version,run.model,run.instructor_mode,
                       run.selected_bundles,run.prompt_hash,run.schema_hash,run.normalization,
                       run.input_sha256,run.profile_name,run.profile_aliases,
-                      run.profile_source_sha256,run.profile_version,run.response,
+                      run.profile_source_sha256,run.profile_version,run.alias_catalog_version,run.response,
                       selection.selected_bundles AS active_bundles,
                       response.input_sha256 AS active_input_sha256,
                       response.profile_name AS active_profile_name,
                       response.profile_aliases AS active_profile_aliases,
                       response.profile_source_sha256 AS active_profile_source_sha256,
                       response.profile_version AS active_profile_version,
+                      response.alias_catalog_version AS active_alias_catalog_version,
                       response.normalization AS active_normalization,
                       processing.validated_extraction_run_id
                FROM passage_processing AS processing
@@ -274,9 +304,12 @@ def _matching_active_extraction(
                  AND processing.source_id=:source_id AND processing.source_version=:source_version
                  AND processing.passage_id=:passage_id
                  AND run.extraction_run_id=:extraction_run_id AND run.status='succeeded'"""
-        ),
-        {**_params(passage), "extraction_run_id": extraction_run_id},
-    ).mappings().one_or_none()
+            ),
+            {**_params(passage), "extraction_run_id": extraction_run_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
     if row is None:
         return None
     if (
@@ -285,21 +318,26 @@ def _matching_active_extraction(
         or list(row["selected_bundles"] or []) != list(row["active_bundles"] or [])
         or row["input_sha256"] != row["active_input_sha256"]
         or row["profile_name"] != row["active_profile_name"]
-        or dict(row["profile_aliases"] or {}) != dict(row["active_profile_aliases"] or {})
+        or list(row["profile_aliases"] or [])
+        != list(row["active_profile_aliases"] or [])
         or row["profile_source_sha256"] != row["active_profile_source_sha256"]
         or row["profile_version"] != row["active_profile_version"]
+        or row["alias_catalog_version"] != row["active_alias_catalog_version"]
     ):
         return None
     profile = {
         "name": row["profile_name"],
-        "aliases": dict(row["profile_aliases"] or {}),
+        "aliases": list(row["profile_aliases"] or []),
+        "alias_catalog_version": row["alias_catalog_version"],
         "descriptor_sha256": row["profile_source_sha256"],
         "profile_version": row["profile_version"],
     }
     active_bundles = tuple(row["active_bundles"] or ())
     current_prompt_hash = sha256(assemble_prompt(active_bundles).encode()).hexdigest()
     current_schema_hash = sha256(
-        canonical_json(build_response_model(active_bundles).model_json_schema()).encode()
+        canonical_json(
+            build_response_model(active_bundles).model_json_schema()
+        ).encode()
     ).hexdigest()
     if (
         row["prompt_hash"] != current_prompt_hash
@@ -318,14 +356,18 @@ def _matching_active_extraction(
     return row if row["extraction_version"] == expected_version else None
 
 
-def _source_ref(connection: Connection, table: str, identity_column: str, identity: str, passage: ScopedPassageIdentity) -> None:
+def _source_ref(
+    connection: Connection,
+    table: str,
+    identity_column: str,
+    identity: str,
+    passage: ScopedPassageIdentity,
+) -> None:
     connection.execute(
-        text(
-            f"""INSERT INTO {table}
+        text(f"""INSERT INTO {table}
                  (tenant_id,project_id,{identity_column},source_id,source_version,passage_id)
                  VALUES (:tenant,:project,:identity,:source_id,:source_version,:passage_id)
-                 ON CONFLICT DO NOTHING"""
-        ),
+                 ON CONFLICT DO NOTHING"""),
         {**_params(passage), "identity": identity},
     )
 
@@ -391,65 +433,82 @@ def materialize_extraction(
         raise ValueError("unknown materialization failure point")
     materialization_run_id = uuid4()
     previous: UUID | None = None
-    counts = {"mentions": 0, "alias_candidates": 0, "assertions": 0, "evidence_edges": 0}
+    counts = {"mentions": 0, "alias_proposals": 0, "assertions": 0, "evidence_edges": 0}
     try:
         with engine.begin() as connection:
             params = {**_params(passage), "extraction_run_id": extraction_run_id}
             identity_matches = connection.execute(
-                text(
-                    """SELECT 1 FROM llm_extraction_run
+                text("""SELECT 1 FROM llm_extraction_run
                        WHERE extraction_run_id=:extraction_run_id AND tenant_id=:tenant
                          AND project_id=:project AND source_id=:source_id
                          AND source_version=:source_version AND passage_id=:passage_id
-                         AND status='succeeded'"""
-                ),
+                         AND status='succeeded'"""),
                 params,
             ).scalar_one_or_none()
             if identity_matches is None:
-                raise ValueError("extraction run does not match the full passage identity")
-            current = connection.execute(
-                text(
-                    """SELECT active_extraction_run_id,validated_extraction_run_id
+                raise ValueError(
+                    "extraction run does not match the full passage identity"
+                )
+            current = (
+                connection.execute(
+                    text("""SELECT active_extraction_run_id,validated_extraction_run_id
                        FROM passage_processing
                        WHERE tenant_id=:tenant AND project_id=:project AND source_id=:source_id
                          AND source_version=:source_version AND passage_id=:passage_id
-                       FOR UPDATE"""
-                ),
-                params,
-            ).mappings().one_or_none()
+                       FOR UPDATE"""),
+                    params,
+                )
+                .mappings()
+                .one_or_none()
+            )
             if current is None:
                 raise ValueError("passage has no matching processing state")
             if current["validated_extraction_run_id"] != extraction_run_id:
-                raise ValueError("extraction run does not match the active extraction identity")
-            extraction = _matching_active_extraction(connection, passage, extraction_run_id)
+                raise ValueError(
+                    "extraction run does not match the active extraction identity"
+                )
+            extraction = _matching_active_extraction(
+                connection, passage, extraction_run_id
+            )
             if extraction is None:
-                raise ValueError("extraction run does not match the active Jev selection identity")
+                raise ValueError(
+                    "extraction run does not match the active Jev selection identity"
+                )
+            catalog = approved_alias_catalog(connection, passage.scope)
+            if (
+                extraction["alias_catalog_version"] != catalog.version
+                or extraction["active_alias_catalog_version"] != catalog.version
+                or list(extraction["profile_aliases"] or [])
+                != _catalog_entries(catalog)
+            ):
+                raise ValueError(
+                    "extraction run does not match the active alias catalog"
+                )
             previous = current["active_extraction_run_id"]
             response = extraction["response"]
             if not isinstance(response, dict):
                 raise ValueError("successful extraction run has no complete response")
-            groups = tuple(response.get(name) for name in ("entities", "assertions", "relationships", "source_refs"))
+            groups = tuple(
+                response.get(name)
+                for name in ("entities", "assertions", "relationships", "source_refs")
+            )
             if not all(isinstance(group, list) for group in groups):
                 raise ValueError("successful extraction response is incomplete")
             entities, assertions, relationships, source_refs = groups
-            profile = ProjectProfile(
-                str(extraction["profile_name"] or "snapshot"),
-                dict(extraction["profile_aliases"] or {}),
-                trusted_descriptor_path_for_profile(str(extraction["profile_name"] or "snapshot")),
-                str(extraction["profile_source_sha256"] or ""),
-                str(extraction["profile_version"]),
+            profile_name = str(extraction["profile_name"] or "")
+            bootstrap_profile_applications(
+                connection,
                 passage.scope,
-                trusted_applications_for_profile(str(extraction["profile_name"] or "snapshot")),
+                profile_name=profile_name,
+                profile_version=str(extraction["profile_version"]),
+                profile_source_sha256=str(extraction["profile_source_sha256"] or ""),
             )
-            bootstrap_profile_aliases(connection, profile)
             connection.execute(
-                text(
-                    """INSERT INTO materialization_run
+                text("""INSERT INTO materialization_run
                        (materialization_run_id,extraction_run_id,tenant_id,project_id,source_id,
                         source_version,passage_id,previous_active_extraction_run_id,status)
                        VALUES (:materialization_id,:extraction_run_id,:tenant,:project,:source_id,
-                        :source_version,:passage_id,:previous,'running')"""
-                ),
+                        :source_version,:passage_id,:previous,'running')"""),
                 {
                     **params,
                     "materialization_id": materialization_run_id,
@@ -459,10 +518,15 @@ def materialize_extraction(
 
             local_nodes: dict[str, str] = {
                 "source_passage": derive_scoped_id(
-                    "passage", passage.scope, passage.source_id, passage.source_version, passage.passage_id
+                    "passage",
+                    passage.scope,
+                    passage.source_id,
+                    passage.source_version,
+                    passage.passage_id,
                 )
             }
             local_types: dict[str, str] = {"source_passage": "SourcePassage"}
+            local_entities: dict[str, ResolvedEntity] = {}
             for entity in entities:
                 entity_type = str(entity["type"])
                 if entity_type in {"AliasCandidate", "RedactionMention"}:
@@ -480,29 +544,45 @@ def materialize_extraction(
                     attributes={
                         key: value
                         for key, value in entity.items()
-                        if key not in {
-                            "type", "local_id", "supporting_quote", "occurrence_index",
-                            "original_quote", "original_start", "original_end", "model_start", "model_end",
+                        if key
+                        not in {
+                            "type",
+                            "local_id",
+                            "supporting_quote",
+                            "occurrence_index",
+                            "original_quote",
+                            "original_start",
+                            "original_end",
+                            "model_start",
+                            "model_end",
                         }
                     },
                 )
-                resolved = resolve_mention(connection, passage.scope, mention, profile)
+                resolved = _resolve_profile_application(
+                    passage.scope,
+                    mention,
+                    profile_name,
+                ) or resolve_mention(connection, passage.scope, mention, catalog)
                 local_nodes[local_id] = resolved.node_id
                 local_types[local_id] = entity_type
+                local_entities[local_id] = resolved
                 mention_id = derive_scoped_id(
-                    "mention", passage.scope, passage.source_id, passage.source_version,
-                    passage.passage_id, str(extraction_run_id), local_id,
+                    "mention",
+                    passage.scope,
+                    passage.source_id,
+                    passage.source_version,
+                    passage.passage_id,
+                    str(extraction_run_id),
+                    local_id,
                 )
                 connection.execute(
-                    text(
-                        """INSERT INTO entity_mention
+                    text("""INSERT INTO entity_mention
                            (tenant_id,project_id,source_id,source_version,passage_id,mention_id,
                             entity_type,text,extraction_run_id,original_start,original_end,
                             model_start,model_end,exact_quote)
                            VALUES (:tenant,:project,:source_id,:source_version,:passage_id,:mention_id,
                             :entity_type,:entity_text,:extraction_run_id,:original_start,:original_end,
-                            :model_start,:model_end,:exact_quote)"""
-                    ),
+                            :model_start,:model_end,:exact_quote)"""),
                     {
                         **params,
                         "mention_id": mention_id,
@@ -516,20 +596,24 @@ def materialize_extraction(
                     },
                 )
                 connection.execute(
-                    text(
-                        """INSERT INTO kg_node_mention_ref
+                    text("""INSERT INTO kg_node_mention_ref
                            (tenant_id,project_id,node_id,source_id,source_version,passage_id,
                             mention_id,extraction_run_id)
                            VALUES (:tenant,:project,:node_id,:source_id,:source_version,:passage_id,
-                            :mention_id,:extraction_run_id)"""
-                    ),
+                            :mention_id,:extraction_run_id)"""),
                     {
                         **params,
                         "node_id": resolved.node_id,
                         "mention_id": mention_id,
                     },
                 )
-                _source_ref(connection, "kg_node_source_ref", "node_id", resolved.node_id, passage)
+                _source_ref(
+                    connection,
+                    "kg_node_source_ref",
+                    "node_id",
+                    resolved.node_id,
+                    passage,
+                )
                 counts["mentions"] += 1
 
             for entity in entities:
@@ -537,8 +621,13 @@ def materialize_extraction(
                 local_id = str(entity["local_id"])
                 if entity_type == "RedactionMention":
                     mention_id = derive_scoped_id(
-                        "redaction", passage.scope, passage.source_id, passage.source_version,
-                        passage.passage_id, str(extraction_run_id), local_id,
+                        "redaction",
+                        passage.scope,
+                        passage.source_id,
+                        passage.source_version,
+                        passage.passage_id,
+                        str(extraction_run_id),
+                        local_id,
                     )
                     connection.execute(
                         text(
@@ -559,30 +648,37 @@ def materialize_extraction(
                     )
                     counts["mentions"] += 1
                 elif entity_type == "AliasCandidate":
-                    product_local_id = str(entity["product_local_id"])
-                    if local_types.get(product_local_id) != "Product":
-                        raise ValueError("alias candidate does not reference a resolved local Product")
-                    alias_id = derive_scoped_id(
-                        "alias", passage.scope, passage.source_id, passage.source_version,
-                        passage.passage_id, str(extraction_run_id), local_id,
-                    )
-                    connection.execute(
-                        text(
-                            """INSERT INTO alias_candidate
-                               (tenant_id,project_id,source_id,source_version,passage_id,alias_id,candidate,
-                                extraction_run_id,proposer,extraction_version,original_quote,status)
-                               VALUES (:tenant,:project,:source_id,:source_version,:passage_id,:alias_id,:candidate,
-                                :extraction_run_id,'instructor',:extraction_version,:original_quote,'pending')"""
+                    target_local_id = str(entity["target_local_id"])
+                    target_type = local_types.get(target_local_id)
+                    if target_type not in {"Product", "Assay"}:
+                        raise ValueError(
+                            "alias candidate does not reference a resolved local Product or Assay"
+                        )
+                    target = local_entities[target_local_id]
+                    record_alias_proposal(
+                        connection,
+                        passage.scope,
+                        AliasProposal(
+                            str(entity["candidate"]),
+                            target.canonical_name,
+                            target_type,
+                            target.canonical_key,
+                            0.5,
+                            passage,
+                            str(entity["original_quote"]),
+                            int(entity["original_start"]),
+                            int(entity["original_end"]),
+                            "extraction",
+                            "instructor",
+                            str(extraction["extraction_version"]),
                         ),
-                        {
-                            **params,
-                            "alias_id": alias_id,
-                            "candidate": entity["candidate"],
-                            "extraction_version": extraction["extraction_version"],
-                            "original_quote": entity["original_quote"],
-                        },
+                        model=str(extraction["model"]),
+                        prompt_hash=str(extraction["prompt_hash"]),
+                        schema_hash=str(extraction["schema_hash"]),
+                        extraction_run_id=extraction_run_id,
+                        input_sha256=str(extraction["input_sha256"]),
                     )
-                    counts["alias_candidates"] += 1
+                    counts["alias_proposals"] += 1
             _check_failure(failure_at, "after_resolution")
             if failure_injector:
                 failure_injector("after_resolution")
@@ -590,8 +686,13 @@ def materialize_extraction(
             for assertion in assertions:
                 local_id = str(assertion["local_id"])
                 assertion_id = derive_scoped_id(
-                    "assertion", passage.scope, passage.source_id, passage.source_version,
-                    passage.passage_id, str(extraction_run_id), local_id,
+                    "assertion",
+                    passage.scope,
+                    passage.source_id,
+                    passage.source_version,
+                    passage.passage_id,
+                    str(extraction_run_id),
+                    local_id,
                 )
                 connection.execute(
                     text(
@@ -607,7 +708,9 @@ def materialize_extraction(
                         **params,
                         "assertion_id": assertion_id,
                         "claim": assertion["claim"],
-                        "chronology_state": assertion.get("chronology_state", "reported"),
+                        "chronology_state": assertion.get(
+                            "chronology_state", "reported"
+                        ),
                         "review_state": assertion.get("review_state", "unreviewed"),
                         "authority": assertion.get("authority"),
                         "status": assertion.get("status"),
@@ -630,13 +733,19 @@ def materialize_extraction(
                             {
                                 "claim": assertion["claim"],
                                 "extraction_run_id": str(extraction_run_id),
-                                "chronology_state": assertion.get("chronology_state", "reported"),
-                                "review_state": assertion.get("review_state", "unreviewed"),
+                                "chronology_state": assertion.get(
+                                    "chronology_state", "reported"
+                                ),
+                                "review_state": assertion.get(
+                                    "review_state", "unreviewed"
+                                ),
                             }
                         ),
                     },
                 )
-                _source_ref(connection, "kg_node_source_ref", "node_id", assertion_id, passage)
+                _source_ref(
+                    connection, "kg_node_source_ref", "node_id", assertion_id, passage
+                )
                 local_nodes[local_id] = assertion_id
                 local_types[local_id] = "Assertion"
                 counts["assertions"] += 1
@@ -650,22 +759,35 @@ def materialize_extraction(
                 source_local_id = str(relationship["source_local_id"])
                 target_local_id = str(relationship["target_local_id"])
                 assertion_local_id = str(relationship["assertion_local_id"])
-                if source_local_id not in local_nodes or target_local_id not in local_nodes:
-                    raise ValueError("materialization relationship has an unresolved local endpoint")
-                if assertion_local_id not in local_nodes or local_types.get(assertion_local_id) != "Assertion":
-                    raise ValueError("materialization relationship has an unresolved assertion")
+                if (
+                    source_local_id not in local_nodes
+                    or target_local_id not in local_nodes
+                ):
+                    raise ValueError(
+                        "materialization relationship has an unresolved local endpoint"
+                    )
+                if (
+                    assertion_local_id not in local_nodes
+                    or local_types.get(assertion_local_id) != "Assertion"
+                ):
+                    raise ValueError(
+                        "materialization relationship has an unresolved assertion"
+                    )
                 edge_id = derive_scoped_id(
-                    "evidence", passage.scope, passage.source_id, passage.source_version,
-                    passage.passage_id, str(extraction_run_id), local_id,
+                    "evidence",
+                    passage.scope,
+                    passage.source_id,
+                    passage.source_version,
+                    passage.passage_id,
+                    str(extraction_run_id),
+                    local_id,
                 )
                 connection.execute(
-                    text(
-                        """INSERT INTO kg_edge
+                    text("""INSERT INTO kg_edge
                            (tenant_id,project_id,edge_id,edge_type,source_node_id,target_node_id,
                             assertion_id,is_evidence,attributes)
                            VALUES (:tenant,:project,:edge_id,:edge_type,:source_node_id,:target_node_id,
-                            :assertion_id,true,CAST(:attributes AS jsonb))"""
-                    ),
+                            :assertion_id,true,CAST(:attributes AS jsonb))"""),
                     {
                         **params,
                         "edge_id": edge_id,
@@ -676,17 +798,33 @@ def materialize_extraction(
                         "attributes": json.dumps(relationship.get("attributes", {})),
                     },
                 )
-                _source_ref(connection, "kg_edge_source_ref", "edge_id", edge_id, passage)
+                _source_ref(
+                    connection, "kg_edge_source_ref", "edge_id", edge_id, passage
+                )
                 local_edges[local_id] = edge_id
                 counts["evidence_edges"] += 1
             for source_ref in source_refs:
                 record_local_id = str(source_ref["record_local_id"])
                 if record_local_id in local_nodes:
-                    _source_ref(connection, "kg_node_source_ref", "node_id", local_nodes[record_local_id], passage)
+                    _source_ref(
+                        connection,
+                        "kg_node_source_ref",
+                        "node_id",
+                        local_nodes[record_local_id],
+                        passage,
+                    )
                 elif record_local_id in local_edges:
-                    _source_ref(connection, "kg_edge_source_ref", "edge_id", local_edges[record_local_id], passage)
+                    _source_ref(
+                        connection,
+                        "kg_edge_source_ref",
+                        "edge_id",
+                        local_edges[record_local_id],
+                        passage,
+                    )
                 else:
-                    raise ValueError("materialization source reference has an unresolved local record")
+                    raise ValueError(
+                        "materialization source reference has an unresolved local record"
+                    )
             _check_failure(failure_at, "after_relationships")
             if failure_injector:
                 failure_injector("after_relationships")
@@ -695,12 +833,10 @@ def materialize_extraction(
             if failure_injector:
                 failure_injector("before_activation")
             connection.execute(
-                text(
-                    """UPDATE materialization_run
+                text("""UPDATE materialization_run
                        SET status='succeeded',counts=CAST(:counts AS jsonb),finished_at=now()
                        WHERE tenant_id=:tenant AND project_id=:project
-                         AND materialization_run_id=:materialization_id"""
-                ),
+                         AND materialization_run_id=:materialization_id"""),
                 {
                     **params,
                     "materialization_id": materialization_run_id,
@@ -726,7 +862,10 @@ def materialize_extraction(
         _record_failed_materialization(
             engine, materialization_run_id, passage, extraction_run_id, previous
         )
-        if isinstance(error, RuntimeError) and str(error) == "injected materialization failure":
+        if (
+            isinstance(error, RuntimeError)
+            and str(error) == "injected materialization failure"
+        ):
             raise
         raise RuntimeError("materialization failed") from None
 
@@ -735,7 +874,7 @@ def materialize_extraction(
         extraction_run_id,
         previous,
         counts["mentions"],
-        counts["alias_candidates"],
+        counts["alias_proposals"],
         counts["assertions"],
         counts["evidence_edges"],
     )

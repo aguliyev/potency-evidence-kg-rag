@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Literal, Union
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
@@ -16,11 +16,18 @@ from sqlalchemy.engine import Engine
 
 from .contracts import ALLOWED_RELATION_ENDPOINTS, Scope, ScopedPassageIdentity
 from .ids import canonical_json, derive_extraction_version
-from .llm_client import GenerationClientIdentity, GenerationUnselectedTypeError, StructuredExtractionClient
+from .llm_client import (
+    GenerationUnselectedTypeError,
+    StructuredExtractionClient,
+)
 from .processing_policy import BUNDLE_ORDER
 from .prompt_resources.extraction import RETRY_INSTRUCTION, assemble_prompt
 from .prompt_resources.jev_bundles import BUNDLE_TO_TYPES
-from .redactions import RedactionSubstitution, restore_model_quote, substitute_redactions
+from .redactions import (
+    RedactionSubstitution,
+    restore_model_quote,
+    substitute_redactions,
+)
 
 
 class _StrictModel(BaseModel):
@@ -58,7 +65,7 @@ _ENTITY_FIELDS: dict[str, dict[str, tuple[object, object]]] = {
     "Product": {"name": (str, ...)},
     "Application": {"application_id": (str, ...)},
     "Indication": {"name": (str, ...)},
-    "AliasCandidate": {"candidate": (str, ...), "product_local_id": (str, ...)},
+    "AliasCandidate": {"candidate": (str, ...), "target_local_id": (str, ...)},
     "PotencyStrategy": {"description": (str, ...)},
     "Assay": {"name": (str, ...), "role": (str | None, None)},
     "MeasuredAttribute": {"name": (str, ...)},
@@ -210,9 +217,9 @@ def validate_complete_response(
     for entity in entities:
         if (
             entity.get("type") == "AliasCandidate"
-            and record_types.get(str(entity.get("product_local_id"))) != "Product"
+            and record_types.get(str(entity.get("target_local_id"))) not in {"Product", "Assay"}
         ):
-            raise ValueError("alias candidate contains an unresolved passage-local product reference")
+            raise ValueError("alias candidate contains an unresolved passage-local Product or Assay reference")
 
     grounded_relationships: list[dict[str, object]] = []
     for relationship in relationships:
@@ -270,7 +277,7 @@ def _selected_rows(engine: Engine, scope: Scope) -> list[dict[str, object]]:
                     """
                     SELECT p.source_id,p.source_version,p.passage_id,p.text,
                            pp.active_jev_selection_id,s.selected_bundles,
-                           r.profile_name,r.profile_aliases,r.profile_source_sha256,r.profile_version
+                           r.profile_name,r.profile_aliases,r.profile_source_sha256,r.profile_version,r.alias_catalog_version
                     FROM passage_processing AS pp
                     JOIN source_passage AS p
                       ON (p.tenant_id,p.project_id,p.source_id,p.source_version,p.passage_id)=
@@ -336,7 +343,8 @@ def _prepare_extraction(
     schema_hash = sha256(canonical_json(response_model.model_json_schema()).encode()).hexdigest()
     profile = {
         "name": row["profile_name"],
-        "aliases": row["profile_aliases"] or {},
+        "aliases": row["profile_aliases"] or [],
+        "alias_catalog_version": row["alias_catalog_version"],
         "descriptor_sha256": row["profile_source_sha256"],
         "profile_version": row["profile_version"],
     }
@@ -386,6 +394,7 @@ def _reusable_run_id(
                      AND profile_aliases=CAST(:profile_aliases AS jsonb)
                      AND profile_source_sha256 IS NOT DISTINCT FROM :profile_source_sha256
                      AND profile_version=:profile_version
+                     AND alias_catalog_version=:alias_catalog_version
                    ORDER BY created_at DESC,extraction_run_id DESC LIMIT 1"""
             ),
             {
@@ -402,9 +411,10 @@ def _reusable_run_id(
                 "bundles": json.dumps(row["selected_bundles"]),
                 "input_sha256": prepared.input_sha256,
                 "profile_name": row["profile_name"],
-                "profile_aliases": json.dumps(row["profile_aliases"] or {}),
+                "profile_aliases": json.dumps(row["profile_aliases"] or []),
                 "profile_source_sha256": row["profile_source_sha256"],
                 "profile_version": row["profile_version"],
+                "alias_catalog_version": row["alias_catalog_version"],
             },
         ).scalar_one_or_none()
 
@@ -532,9 +542,10 @@ def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionC
         "schema_hash": outcome.schema_hash,
         "input_sha256": outcome.input_sha256,
         "profile_name": row["profile_name"],
-        "profile_aliases": json.dumps(row["profile_aliases"] or {}),
+        "profile_aliases": json.dumps(row["profile_aliases"] or []),
         "profile_sha": row["profile_source_sha256"],
         "profile_version": row["profile_version"],
+        "alias_catalog_version": row["alias_catalog_version"],
         "selection_id": row["active_jev_selection_id"],
         "usage": json.dumps(dict(outcome.usage)),
         "attempts": outcome.attempts,
@@ -547,11 +558,11 @@ def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionC
                     """INSERT INTO llm_extraction_run
                        (extraction_run_id,tenant_id,project_id,source_id,source_version,passage_id,extraction_version,
                         model,sanitized_origin,credential_env,instructor_mode,selected_bundles,prompt_hash,schema_hash,
-                        normalization,input_sha256,profile_name,profile_aliases,profile_source_sha256,profile_version,
+                        normalization,input_sha256,profile_name,profile_aliases,profile_source_sha256,profile_version,alias_catalog_version,
                         usage,attempts,status,response)
                        VALUES (:run_id,:tenant,:project,:source_id,:source_version,:passage_id,:extraction_version,
                         :model,:origin,:credential,:mode,CAST(:bundles AS jsonb),:prompt_hash,:schema_hash,
-                        'redaction-v1',:input_sha256,:profile_name,CAST(:profile_aliases AS jsonb),:profile_sha,:profile_version,
+                        'redaction-v1',:input_sha256,:profile_name,CAST(:profile_aliases AS jsonb),:profile_sha,:profile_version,:alias_catalog_version,
                         CAST(:usage AS jsonb),:attempts,'succeeded',CAST(:response AS jsonb))"""
                 ),
                 params,
@@ -573,11 +584,11 @@ def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionC
                     """INSERT INTO llm_extraction_run
                        (extraction_run_id,tenant_id,project_id,source_id,source_version,passage_id,extraction_version,
                         model,sanitized_origin,credential_env,instructor_mode,selected_bundles,prompt_hash,schema_hash,
-                        normalization,input_sha256,profile_name,profile_aliases,profile_source_sha256,profile_version,
+                        normalization,input_sha256,profile_name,profile_aliases,profile_source_sha256,profile_version,alias_catalog_version,
                         usage,attempts,status,error_detail)
                        VALUES (:run_id,:tenant,:project,:source_id,:source_version,:passage_id,:extraction_version,
                         :model,:origin,:credential,:mode,CAST(:bundles AS jsonb),:prompt_hash,:schema_hash,
-                        'redaction-v1',:input_sha256,:profile_name,CAST(:profile_aliases AS jsonb),:profile_sha,:profile_version,
+                        'redaction-v1',:input_sha256,:profile_name,CAST(:profile_aliases AS jsonb),:profile_sha,:profile_version,:alias_catalog_version,
                         CAST(:usage AS jsonb),:attempts,'failed','extraction validation failed')"""
                 ),
                 params,

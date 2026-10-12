@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Sequence
 
 import pytest
-from sqlalchemy import text
-
+from potency_kg.aliases import approved_alias_catalog
 from potency_kg.contracts import Scope
-from potency_kg.jev_client import JevClientIdentity, JevResponse, JevTransientError, NoulQuestion
-from potency_kg.jev_processing import classify_active_passages
 from potency_kg.ids import canonical_json
+from potency_kg.jev_client import (
+    JevClientIdentity,
+    JevResponse,
+    JevTransientError,
+    NoulQuestion,
+)
+from potency_kg.jev_processing import classify_active_passages
 from potency_kg.processing_policy import BUNDLE_ORDER, JevSelectionPolicy
-
+from sqlalchemy import text
 
 SCOPE = Scope("tenant", "project")
 
@@ -55,6 +60,12 @@ def _insert_embedded_passages(connection, passages: list[tuple[str, str]]) -> No
         connection.execute(text("INSERT INTO passage_processing (tenant_id, project_id, source_id, source_version, passage_id, state, reason) VALUES ('tenant', 'project', 'source', 'v1', :passage, 'not_run', 'imported')"), params)
         connection.execute(text("INSERT INTO embedding_run (embedding_run_id, tenant_id, project_id, source_id, source_version, passage_id, embedding_version, model, sanitized_origin, credential_env, dimensions, normalization, input_sha256, status) VALUES (:run_id, 'tenant', 'project', 'source', 'v1', :passage, 'embedding-v', 'model', 'https://example.test/v1', 'EMBEDDING_LLM_API_KEY', 3072, 'provider_unit_length_v1', :sha, 'succeeded')"), params)
         connection.execute(text("INSERT INTO passage_embedding (tenant_id, project_id, source_id, source_version, passage_id, embedding_run_id) VALUES ('tenant', 'project', 'source', 'v1', :passage, :run_id)"), params)
+
+
+def _approve_alias(connection, alias_id: str, alias_value: str) -> None:
+    connection.execute(text("""INSERT INTO aliases
+        (tenant_id,project_id,alias_id,alias_value,normalized_alias,entity_type,canonical_key,canonical_name,status,managed_by,normalization_version,decided_at,decided_by)
+        VALUES ('tenant','project',:alias_id,:alias_value,lower(:alias_value),'Product','casgevy','CASGEVY','approved','review','nfkc-casefold-whitespace-v1',now(),'reviewer')"""), {"alias_id": alias_id, "alias_value": alias_value})
 
 
 def test_classification_redacts_once_per_eligible_passage_and_persists_complete_decision(db_engine) -> None:
@@ -122,6 +133,48 @@ def test_threshold_only_change_reuses_response_and_recomputes_selection(db_engin
             )
         ).one()
     assert state == ("structural_only", "jev_no_bundle_above_threshold", second.jev_selection_version)
+
+
+def test_jev_reuse_is_rejected_after_an_approved_catalog_change(db_engine) -> None:
+    """Reusing a response from catalog A after approval creates catalog B would retain stale semantics."""
+    with db_engine.begin() as connection:
+        _insert_embedded_passages(connection, [("p1", "CASGEVY uses testing.")])
+        _approve_alias(connection, "casgevy", "CASGEVY")
+        catalog_a = approved_alias_catalog(connection, SCOPE)
+    first_client = _JevDouble({name: 0.5 for name in BUNDLE_ORDER})
+    classify_active_passages(db_engine, SCOPE, first_client, JevSelectionPolicy())
+    with db_engine.begin() as connection:
+        _approve_alias(connection, "exa-cel", "exa-cel")
+        catalog_b = approved_alias_catalog(connection, SCOPE)
+    second_client = _JevDouble({name: 0.5 for name in BUNDLE_ORDER})
+
+    classify_active_passages(db_engine, SCOPE, second_client, JevSelectionPolicy())
+
+    assert catalog_a.version != catalog_b.version
+    assert len(first_client.calls) == 1 and len(second_client.calls) == 1
+    with db_engine.connect() as connection:
+        versions = connection.execute(text("SELECT alias_catalog_version FROM jev_response ORDER BY created_at")).scalars().all()
+    assert versions == [catalog_a.version, catalog_b.version]
+
+
+def test_jev_reuse_requires_the_exact_persisted_catalog_snapshot(db_engine) -> None:
+    """A matching digest alone cannot make a corrupted catalog snapshot reusable."""
+    with db_engine.begin() as connection:
+        _insert_embedded_passages(connection, [("p1", "CASGEVY uses testing.")])
+        _approve_alias(connection, "casgevy", "CASGEVY")
+    first_client = _JevDouble({name: 0.5 for name in BUNDLE_ORDER})
+    classify_active_passages(db_engine, SCOPE, first_client, JevSelectionPolicy())
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE jev_response SET profile_aliases=CAST(:aliases AS jsonb)"),
+            {"aliases": json.dumps([])},
+        )
+    replacement_client = _JevDouble({name: 0.5 for name in BUNDLE_ORDER})
+
+    classify_active_passages(db_engine, SCOPE, replacement_client, JevSelectionPolicy())
+
+    assert len(first_client.calls) == 1
+    assert len(replacement_client.calls) == 1
 
 
 def test_jev_failure_has_no_selection_or_unrestricted_fallback(db_engine) -> None:

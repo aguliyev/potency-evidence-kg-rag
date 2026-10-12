@@ -17,10 +17,15 @@ from pydantic import BaseModel, SecretStr
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .age_projection import graph_counts, refresh_graph
+from .age_projection import refresh_graph
+from .aliases import approved_alias_catalog
 from .contracts import Scope, ScopedPassageIdentity
 from .db import create_engine_from_env
-from .embedding_client import EmbeddingBatch, EmbeddingClientIdentity, OpenAIEmbeddingClient
+from .embedding_client import (
+    EmbeddingBatch,
+    EmbeddingClientIdentity,
+    OpenAIEmbeddingClient,
+)
 from .embeddings import embed_active_passages
 from .export import (
     ExportReport,
@@ -30,19 +35,22 @@ from .export import (
 from .extraction import build_response_model, extract_selected_passages
 from .fixture_catalog import load_fixture_catalog
 from .fixture_runs import ModelClients, run_kg_fixtures
-from .ingest import ImportRequest, import_source_version, preflight_official_inputs
 from .ids import canonical_json, derive_extraction_version
+from .ingest import ImportRequest, import_source_version, preflight_official_inputs
 from .jev_client import JevClientIdentity, JevResponse, NoulQuestion, TypeSafeJevClient
 from .jev_processing import classify_active_passages
 from .llm_client import GenerationClientIdentity, InstructorExtractionClient
 from .output_safety import guard_output_path
 from .processing_policy import BUNDLE_ORDER, JevSelectionPolicy
-from .prompt_resources.extraction import assemble_prompt
 from .project_profiles import assert_protected_inputs_unchanged, protected_input_hashes
+from .prompt_resources.extraction import assemble_prompt
 from .resolution import materialize_extraction
 from .retrieval import RetrievalLimits, retrieve_graph_smoke
-from .settings import load_embedding_settings, load_generation_settings, load_jev_settings
-
+from .settings import (
+    load_embedding_settings,
+    load_generation_settings,
+    load_jev_settings,
+)
 
 MODEL_GATE = "KG_RUN_REAL_MODELS"
 SMOKE_GATE = "KG_ENABLE_RETRIEVAL_SMOKE"
@@ -67,7 +75,9 @@ def _inside(path: Path, directory: Path) -> bool:
 def _protected_descriptor(config: Path, root: Path) -> Path:
     resolved = config.resolve()
     if not resolved.is_file() or not _inside(resolved, root / "configs"):
-        raise ValueError("config must be an existing descriptor beneath the protected configs directory")
+        raise ValueError(
+            "config must be an existing descriptor beneath the protected configs directory"
+        )
     return resolved
 
 
@@ -78,14 +88,23 @@ def _scope_from_descriptor(config: Path) -> Scope:
         tenant_id, project_id = scope["tenant_id"], scope["project_id"]
     except (OSError, KeyError, TypeError, json.JSONDecodeError):
         raise ValueError("descriptor must contain a valid scope") from None
-    if not isinstance(tenant_id, str) or not tenant_id or not isinstance(project_id, str) or not project_id:
-        raise ValueError("descriptor scope must contain nonempty tenant_id and project_id")
+    if (
+        not isinstance(tenant_id, str)
+        or not tenant_id
+        or not isinstance(project_id, str)
+        or not project_id
+    ):
+        raise ValueError(
+            "descriptor scope must contain nonempty tenant_id and project_id"
+        )
     return Scope(tenant_id, project_id)
 
 
 def _jsonable(value: object) -> object:
     if is_dataclass(value) and not isinstance(value, type):
-        return {field.name: _jsonable(getattr(value, field.name)) for field in fields(value)}
+        return {
+            field.name: _jsonable(getattr(value, field.name)) for field in fields(value)
+        }
     if isinstance(value, Mapping):
         return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, (tuple, list, set, frozenset)):
@@ -100,28 +119,37 @@ def _jsonable(value: object) -> object:
 
 
 def _emit(value: object, *, stream: Any = sys.stdout) -> None:
-    print(json.dumps(_jsonable(value), sort_keys=True, separators=(",", ":")), file=stream)
+    print(
+        json.dumps(_jsonable(value), sort_keys=True, separators=(",", ":")), file=stream
+    )
 
 
 def _snapshot_digest(hashes: Mapping[str, str]) -> str:
-    encoded = json.dumps(dict(sorted(hashes.items())), sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(
+        dict(sorted(hashes.items())), sort_keys=True, separators=(",", ":")
+    ).encode()
     return sha256(encoded).hexdigest()
 
 
-def hash_inputs(root: Path, *, output: Path | None = None, verify: Path | None = None) -> dict[str, object]:
+def hash_inputs(
+    root: Path, *, output: Path | None = None, verify: Path | None = None
+) -> dict[str, object]:
     """Write or verify a path-and-content snapshot without exposing supplied contents."""
     if (output is None) == (verify is None):
         raise ValueError("exactly one of output or verify is required")
     resolved_root = root.resolve()
     destination = (
-        guard_output_path(output, package_root=resolved_root) if output is not None else None
+        guard_output_path(output, package_root=resolved_root)
+        if output is not None
+        else None
     )
     current = dict(protected_input_hashes(resolved_root))
     if output is not None:
         assert destination is not None
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(
-            json.dumps({"files": current}, sort_keys=True, separators=(",", ":")) + "\n",
+            json.dumps({"files": current}, sort_keys=True, separators=(",", ":"))
+            + "\n",
             encoding="utf-8",
         )
         snapshot_path = destination
@@ -175,16 +203,22 @@ def real_model_readiness(env: Mapping[str, str]) -> dict[str, bool]:
 
 def _require_real_models(env: Mapping[str, str]) -> None:
     if not real_model_readiness(env)["ready"]:
-        raise RealModelsNotEnabled("real model stage is not enabled with complete valid settings")
+        raise RealModelsNotEnabled(
+            "real model stage is not enabled with complete valid settings"
+        )
 
 
-def _require_stage(env: Mapping[str, str], loader: Callable[[Mapping[str, str]], object]) -> None:
+def _require_stage(
+    env: Mapping[str, str], loader: Callable[[Mapping[str, str]], object]
+) -> None:
     if env.get(MODEL_GATE) != "true":
         raise RealModelsNotEnabled("real model stage is not explicitly enabled")
     try:
         loader(env)
     except (ValueError, TypeError):
-        raise RealModelsNotEnabled("real model stage settings are missing or invalid") from None
+        raise RealModelsNotEnabled(
+            "real model stage settings are missing or invalid"
+        ) from None
 
 
 def _embedding_client(env: Mapping[str, str]) -> OpenAIEmbeddingClient:
@@ -217,7 +251,9 @@ def _active_graph_version(engine: Engine, scope: Scope) -> str:
     return str(value)
 
 
-def export_or_reuse_graph(engine: Engine, scope: Scope, output_root: Path, graph_version: str) -> ExportReport:
+def export_or_reuse_graph(
+    engine: Engine, scope: Scope, output_root: Path, graph_version: str
+) -> ExportReport:
     """Publish once, or validate and repoint to an identical immutable version."""
     root = output_root.resolve()
     version_dir = root / "history" / graph_version
@@ -226,17 +262,33 @@ def export_or_reuse_graph(engine: Engine, scope: Scope, output_root: Path, graph
     return export_graph_version(engine, scope, root, graph_version)
 
 
-def _pending_materializations(engine: Engine, scope: Scope) -> list[tuple[ScopedPassageIdentity, UUID]]:
+def _pending_materializations(
+    engine: Engine, scope: Scope
+) -> list[tuple[ScopedPassageIdentity, UUID]]:
     with engine.connect() as connection:
-        rows = list(connection.execute(
-            text(
-                """
+        current_catalog = approved_alias_catalog(connection, scope)
+        current_catalog_entries = [
+            {
+                "alias_id": entry.alias_id,
+                "alias_value": entry.alias_value,
+                "normalized_alias": entry.normalized_alias,
+                "entity_type": entry.entity_type,
+                "canonical_key": entry.canonical_key,
+                "canonical_name": entry.canonical_name,
+                "normalization_version": entry.normalization_version,
+            }
+            for entry in current_catalog.entries
+        ]
+        rows = list(
+            connection.execute(
+                text("""
                 SELECT pp.source_id,pp.source_version,pp.passage_id,run.extraction_run_id,
                        run.extraction_version,run.model,run.instructor_mode,
                        run.prompt_hash,run.schema_hash,run.normalization,
                        selection.selected_bundles,response.normalization AS active_normalization,
                        response.profile_name,response.profile_aliases,
-                       response.profile_source_sha256,response.profile_version
+                       response.profile_source_sha256,response.profile_version,
+                       response.alias_catalog_version,run.alias_catalog_version
                 FROM passage_processing AS pp
                 JOIN source_head AS head
                   ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
@@ -261,15 +313,16 @@ def _pending_materializations(engine: Engine, scope: Scope) -> list[tuple[Scoped
                   AND run.selected_bundles=selection.selected_bundles
                   AND run.input_sha256=response.input_sha256
                   AND run.profile_version=response.profile_version
+                  AND run.alias_catalog_version=response.alias_catalog_version
                   AND run.profile_name IS NOT DISTINCT FROM response.profile_name
                   AND run.profile_aliases=response.profile_aliases
                   AND run.profile_source_sha256 IS NOT DISTINCT FROM response.profile_source_sha256
                   AND run.normalization=response.normalization
                 ORDER BY pp.source_id,pp.source_version,pp.passage_id
-                """
-            ),
-            {"tenant": scope.tenant_id, "project": scope.project_id},
-        ).mappings())
+                """),
+                {"tenant": scope.tenant_id, "project": scope.project_id},
+            ).mappings()
+        )
     current_rows = []
     for row in rows:
         bundles = tuple(row["selected_bundles"] or ())
@@ -279,7 +332,8 @@ def _pending_materializations(engine: Engine, scope: Scope) -> list[tuple[Scoped
         ).hexdigest()
         profile = {
             "name": row["profile_name"],
-            "aliases": dict(row["profile_aliases"] or {}),
+            "aliases": list(row["profile_aliases"] or []),
+            "alias_catalog_version": row["alias_catalog_version"],
             "descriptor_sha256": row["profile_source_sha256"],
             "profile_version": row["profile_version"],
         }
@@ -296,6 +350,8 @@ def _pending_materializations(engine: Engine, scope: Scope) -> list[tuple[Scoped
             row["prompt_hash"] == prompt_hash
             and row["schema_hash"] == schema_hash
             and row["extraction_version"] == expected_version
+            and row["alias_catalog_version"] == current_catalog.version
+            and list(row["profile_aliases"] or []) == current_catalog_entries
         ):
             current_rows.append(row)
     return [
@@ -314,10 +370,15 @@ def _pending_materializations(engine: Engine, scope: Scope) -> list[tuple[Scoped
 
 
 def materialize_pending_extractions(engine: Engine, scope: Scope) -> dict[str, object]:
-    reports = [materialize_extraction(engine, passage, run_id) for passage, run_id in _pending_materializations(engine, scope)]
+    reports = [
+        materialize_extraction(engine, passage, run_id)
+        for passage, run_id in _pending_materializations(engine, scope)
+    ]
     return {
         "materialized": len(reports),
-        "materialization_run_ids": [report.materialization_run_id for report in reports],
+        "materialization_run_ids": [
+            report.materialization_run_id for report in reports
+        ],
         "extraction_run_ids": [report.extraction_run_id for report in reports],
     }
 
@@ -344,24 +405,20 @@ def _semantic_audit(engine: Engine, scope: Scope) -> dict[str, object]:
         jev = [
             dict(row)
             for row in connection.execute(
-                text(
-                    """SELECT model,request_id,usage,probabilities,status
+                text("""SELECT model,request_id,usage,probabilities,status
                        FROM jev_response
                        WHERE tenant_id=:tenant AND project_id=:project
-                       ORDER BY created_at,response_id"""
-                ),
+                       ORDER BY created_at,response_id"""),
                 params,
             ).mappings()
         ]
         generation = [
             dict(row)
             for row in connection.execute(
-                text(
-                    """SELECT model,usage,status,extraction_version
+                text("""SELECT model,usage,status,extraction_version
                        FROM llm_extraction_run
                        WHERE tenant_id=:tenant AND project_id=:project
-                       ORDER BY created_at,extraction_run_id"""
-                ),
+                       ORDER BY created_at,extraction_run_id"""),
                 params,
             ).mappings()
         ]
@@ -385,7 +442,9 @@ def _report_value(report: object, name: str) -> object:
     return report.get(name) if isinstance(report, Mapping) else getattr(report, name)
 
 
-def run_kg_workflow(config: Path, output_root: Path, *, env: Mapping[str, str] | None = None) -> dict[str, object]:
+def run_kg_workflow(
+    config: Path, output_root: Path, *, env: Mapping[str, str] | None = None
+) -> dict[str, object]:
     """Run the official workflow, with semantic work only behind the complete real-model gate."""
     environment = os.environ if env is None else env
     root = _package_root().resolve()
@@ -484,7 +543,9 @@ class _FixtureJev:
         max_concurrency=1,
     )
 
-    def classify(self, text_value: str, questions: Sequence[NoulQuestion]) -> JevResponse:
+    def classify(
+        self, text_value: str, questions: Sequence[NoulQuestion]
+    ) -> JevResponse:
         return JevResponse(self.identity.model, {name: 1.0 for name in BUNDLE_ORDER})
 
 
@@ -499,13 +560,21 @@ class _FixtureExtraction:
         max_attempts=1,
     )
 
-    def extract(self, model_text: str, response_model: type[BaseModel], prompt: str) -> BaseModel:
-        sentences = tuple(part.strip().rstrip(".!?") for part in model_text.split(". ") if part.strip())
+    def extract(
+        self, model_text: str, response_model: type[BaseModel], prompt: str
+    ) -> BaseModel:
+        sentences = tuple(
+            part.strip().rstrip(".!?")
+            for part in model_text.split(". ")
+            if part.strip()
+        )
         claim = max(sentences, key=len)
         return response_model.model_validate(
             {
                 "entities": [],
-                "assertions": [{"local_id": "assertion", "claim": claim, "supporting_quote": claim}],
+                "assertions": [
+                    {"local_id": "assertion", "claim": claim, "supporting_quote": claim}
+                ],
                 "relationships": [],
                 "source_refs": [],
             }
@@ -522,7 +591,9 @@ def run_fixture_workflow(package_root: Path, output_root: Path) -> dict[str, obj
     expected_output = (root / "results" / "kg" / "fixtures").absolute()
     output = guard_output_path(requested_output, package_root=root)
     if requested_output != expected_output or not _inside(output, root):
-        raise ValueError("fixture output must be exactly the package results/kg/fixtures directory")
+        raise ValueError(
+            "fixture output must be exactly the package results/kg/fixtures directory"
+        )
     before = dict(protected_input_hashes(root))
     engine: Engine | object | None = None
     try:
@@ -557,7 +628,9 @@ def inspect_kg_workflow(
     root = _package_root().resolve()
     descriptor = _protected_descriptor(config, root)
     guarded_trace = (
-        guard_output_path(trace_output, package_root=root) if trace_output is not None else None
+        guard_output_path(trace_output, package_root=root)
+        if trace_output is not None
+        else None
     )
     before = dict(protected_input_hashes(root))
     engine: Engine | object | None = None
@@ -565,24 +638,32 @@ def inspect_kg_workflow(
         scope = _scope_from_descriptor(descriptor)
         engine = create_engine_from_env()
         with engine.connect() as connection:
-            counts = connection.execute(
-                text(
-                    """SELECT
+            counts = (
+                connection.execute(
+                    text(
+                        """SELECT
                          (SELECT count(*) FROM source_head WHERE tenant_id=:tenant AND project_id=:project) AS sources,
                          (SELECT count(*) FROM source_passage AS passage JOIN source_head AS head
                            ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
                               (passage.tenant_id,passage.project_id,passage.source_id,passage.source_version)
                           WHERE passage.tenant_id=:tenant AND passage.project_id=:project) AS passages"""
-                ),
-                {"tenant": scope.tenant_id, "project": scope.project_id},
-            ).mappings().one()
-            active = connection.execute(
-                text(
-                    "SELECT graph_version,active_graph_name,index_version,embedding_version FROM graph_scope "
-                    "WHERE tenant_id=:tenant AND project_id=:project"
-                ),
-                {"tenant": scope.tenant_id, "project": scope.project_id},
-            ).mappings().one_or_none()
+                    ),
+                    {"tenant": scope.tenant_id, "project": scope.project_id},
+                )
+                .mappings()
+                .one()
+            )
+            active = (
+                connection.execute(
+                    text(
+                        "SELECT graph_version,active_graph_name,index_version,embedding_version FROM graph_scope "
+                        "WHERE tenant_id=:tenant AND project_id=:project"
+                    ),
+                    {"tenant": scope.tenant_id, "project": scope.project_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
         report: dict[str, object] = {
             "status": "inspected",
             "scope": scope,
@@ -597,7 +678,9 @@ def inspect_kg_workflow(
                 raise ValueError("retrieval smoke requires a question and trace output")
             index_version = active["index_version"] if active is not None else None
             if index_version is None:
-                raise ValueError("retrieval smoke requires an index bound to the active graph")
+                raise ValueError(
+                    "retrieval smoke requires an index bound to the active graph"
+                )
             trace = retrieve_graph_smoke(
                 engine,
                 scope,
@@ -609,7 +692,10 @@ def inspect_kg_workflow(
             assert guarded_trace is not None
             destination = guarded_trace
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(json.dumps(_jsonable(trace), sort_keys=True, separators=(",", ":")) + "\n")
+            destination.write_text(
+                json.dumps(_jsonable(trace), sort_keys=True, separators=(",", ":"))
+                + "\n"
+            )
             report["retrieval_smoke"] = "succeeded"
             report["trace_output"] = destination
             report["trace"] = trace
@@ -623,7 +709,9 @@ def inspect_kg_workflow(
                 dispose()
 
 
-def _guarded_config_call(config: Path, operation: Callable[[Path, Scope, Engine], object]) -> object:
+def _guarded_config_call(
+    config: Path, operation: Callable[[Path, Scope, Engine], object]
+) -> object:
     root = _package_root().resolve()
     descriptor = _protected_descriptor(config, root)
     before = dict(protected_input_hashes(root))
@@ -653,7 +741,14 @@ def build_parser() -> argparse.ArgumentParser:
     destination.add_argument("--output", type=Path)
     destination.add_argument("--verify", type=Path)
 
-    for name in ("preflight", "import", "embed", "classify-jev", "extract", "materialize"):
+    for name in (
+        "preflight",
+        "import",
+        "embed",
+        "classify-jev",
+        "extract",
+        "materialize",
+    ):
         _add_config(subparsers.add_parser(name))
 
     refresh = subparsers.add_parser("refresh-graph")
@@ -704,14 +799,23 @@ def _execute(args: argparse.Namespace, env: Mapping[str, str]) -> object:
         if command == "embed":
             return embed_active_passages(engine, scope, _embedding_client(env))
         if command == "classify-jev":
-            return classify_active_passages(engine, scope, _jev_client(env), JevSelectionPolicy())
+            return classify_active_passages(
+                engine, scope, _jev_client(env), JevSelectionPolicy()
+            )
         if command == "extract":
-            report = extract_selected_passages(engine, scope, _generation_client(env), 1)
-            return {"report": report, "audit": _semantic_audit(engine, scope)["generation"]}
+            report = extract_selected_passages(
+                engine, scope, _generation_client(env), 1
+            )
+            return {
+                "report": report,
+                "audit": _semantic_audit(engine, scope)["generation"],
+            }
         if command == "materialize":
             return materialize_pending_extractions(engine, scope)
         if command == "refresh-graph":
-            return refresh_graph(engine, scope, args.mode, args.allow_partial, args.force)
+            return refresh_graph(
+                engine, scope, args.mode, args.allow_partial, args.force
+            )
         if command == "export-kg":
             version = _active_graph_version(engine, scope)
             return export_or_reuse_graph(engine, scope, args.output, version)

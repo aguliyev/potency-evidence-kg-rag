@@ -6,8 +6,6 @@ from typing import Sequence
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import event, text
-
 from potency_kg.age_projection import refresh_graph
 from potency_kg.contracts import Scope, ScopedSourceVersion
 from potency_kg.embedding_client import EmbeddingBatch, EmbeddingClientIdentity
@@ -15,7 +13,7 @@ from potency_kg.embeddings import embed_active_passages
 from potency_kg.graph_store import write_structural_version
 from potency_kg.ids import derive_scoped_id
 from potency_kg.retrieval import RetrievalLimits, retrieve_graph_smoke
-
+from sqlalchemy import event, text
 
 DIMENSIONS = 3072
 SCOPE = Scope("tenant", "retrieve")
@@ -194,10 +192,10 @@ def test_retrieval_uses_active_age_topology_and_passage_provenance_for_semantic_
                    (extraction_run_id,tenant_id,project_id,source_id,source_version,passage_id,
                     extraction_version,model,sanitized_origin,credential_env,instructor_mode,
                     selected_bundles,input_sha256,profile_name,profile_aliases,
-                    profile_source_sha256,profile_version,status,response)
+                    profile_source_sha256,profile_version,alias_catalog_version,status,response)
                    VALUES (:run_id,:tenant,:project,'source','v1','p1','extraction-test','test',
-                    'https://invalid','KEY','openai','[]','input','empty-v1','{}','profile-sha',
-                    'profile-v1','succeeded','{}')"""
+                    'https://invalid','KEY','openai','[]','input','empty-v1','[]','profile-sha',
+                    'profile-v1','approved-alias-catalog-v1-retrieval','succeeded','{}')"""
             ),
             {**params, "run_id": extraction_run_id},
         )

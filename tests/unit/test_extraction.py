@@ -2,19 +2,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-from pydantic import SecretStr, ValidationError
-
 import potency_kg.llm_client as llm_client_module
+import pytest
+from potency_kg.contracts import ScopedPassageIdentity
 from potency_kg.extraction import (
     build_response_model,
     selected_entity_types,
     validate_complete_response,
 )
-from potency_kg.contracts import ScopedPassageIdentity
-from potency_kg.llm_client import GenerationUnselectedTypeError, InstructorExtractionClient
+from potency_kg.llm_client import (
+    GenerationUnselectedTypeError,
+    InstructorExtractionClient,
+)
 from potency_kg.redactions import substitute_redactions
 from potency_kg.settings import load_generation_settings
+from pydantic import SecretStr, ValidationError
 
 
 def _settings():
@@ -31,7 +33,7 @@ def test_dynamic_response_model_deduplicates_overlaps_and_rejects_unselected_typ
     valid = {
         "entities": [
             {"type": "Product", "local_id": "e1", "name": "CASGEVY", "supporting_quote": "CASGEVY"},
-            {"type": "AliasCandidate", "local_id": "e2", "candidate": "exa-cel", "product_local_id": "e1", "supporting_quote": "exa-cel"},
+            {"type": "AliasCandidate", "local_id": "e2", "candidate": "exa-cel", "target_local_id": "e1", "supporting_quote": "exa-cel"},
         ],
         "assertions": [{"local_id": "a1", "claim": "CASGEVY is also called exa-cel.", "supporting_quote": "CASGEVY is also called exa-cel"}],
         "relationships": [{"local_id": "r1", "relation_type": "applies_to", "source_local_id": "a1", "target_local_id": "e1", "assertion_local_id": "a1"}],
@@ -218,8 +220,8 @@ def test_dynamic_response_model_canonicalizes_bundle_order() -> None:
     assert reversed_input.model_json_schema() == canonical.model_json_schema()
 
 
-def test_alias_candidate_must_reference_a_local_product() -> None:
-    """A merely existing local ID of another type must not satisfy an alias-to-product reference."""
+def test_alias_candidate_must_reference_a_local_product_or_assay() -> None:
+    """Accepting an Application target would let extraction propose an untyped identity merge."""
     passage = ScopedPassageIdentity("t", "p", "s", "v", "p1")
     substitution = substitute_redactions(passage, "BLA 125785 is called exa-cel.")
     model = build_response_model(("product_context", "alias_identity"))
@@ -236,7 +238,7 @@ def test_alias_candidate_must_reference_a_local_product() -> None:
                     "type": "AliasCandidate",
                     "local_id": "alias1",
                     "candidate": "exa-cel",
-                    "product_local_id": "app1",
+                    "target_local_id": "app1",
                     "supporting_quote": "exa-cel",
                 },
             ],
@@ -246,8 +248,24 @@ def test_alias_candidate_must_reference_a_local_product() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="local product"):
+    with pytest.raises(ValueError, match="local Product or Assay"):
         validate_complete_response(response, substitution, ("product_context", "alias_identity"))
+
+
+@pytest.mark.parametrize("entity_type", ("Product", "Assay"))
+def test_alias_candidate_accepts_a_typed_local_product_or_assay_target(entity_type: str) -> None:
+    """Rejecting either allowed target type would discard an extraction-origin proposal."""
+    passage = ScopedPassageIdentity("t", "p", "s", "v", "p1")
+    substitution = substitute_redactions(passage, "CASGEVY is called exa-cel.")
+    model = build_response_model(("product_context", "alias_identity", "assay_evidence"))
+    target = {"type": entity_type, "local_id": "target", "name": "CASGEVY", "supporting_quote": "CASGEVY"}
+    if entity_type == "Assay":
+        target["role"] = "release"
+    response = model.model_validate({"entities": [target, {"type": "AliasCandidate", "local_id": "alias", "candidate": "exa-cel", "target_local_id": "target", "supporting_quote": "exa-cel"}], "assertions": [], "relationships": [], "source_refs": []})
+
+    grounded = validate_complete_response(response, substitution, ("product_context", "alias_identity", "assay_evidence"))
+
+    assert grounded["entities"][1]["target_local_id"] == "target"
 
 
 def test_instructor_adapter_preserves_only_the_unselected_type_retry_signal() -> None:
