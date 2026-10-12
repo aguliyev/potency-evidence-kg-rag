@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .age_projection import refresh_graph
-from .aliases import approved_alias_catalog
+from .aliases import AliasDecision, approved_alias_catalog
 from .contracts import Scope, ScopedPassageIdentity
 from .db import create_engine_from_env
 from .embedding_client import (
@@ -51,6 +51,24 @@ from .settings import (
     load_generation_settings,
     load_jev_settings,
 )
+from .workflow_stages import (
+    alias_status_stage,
+    classify_jev_stage,
+    discover_aliases_deterministic_stage,
+    discover_aliases_llm_stage,
+    embed_stage,
+    export_stage,
+    extract_stage,
+    import_stage,
+    inspect_aliases_stage,
+    load_alias_seeds_stage,
+    materialize_stage,
+    preflight_stage,
+    refresh_graph_stage,
+    review_alias_stage,
+    run_kg_workflow as _run_kg_workflow,
+)
+from . import workflow_stages as _workflow_stages
 
 MODEL_GATE = "KG_RUN_REAL_MODELS"
 SMOKE_GATE = "KG_ENABLE_RETRIEVAL_SMOKE"
@@ -442,7 +460,7 @@ def _report_value(report: object, name: str) -> object:
     return report.get(name) if isinstance(report, Mapping) else getattr(report, name)
 
 
-def run_kg_workflow(
+def _legacy_run_kg_workflow(
     config: Path, output_root: Path, *, env: Mapping[str, str] | None = None
 ) -> dict[str, object]:
     """Run the official workflow, with semantic work only behind the complete real-model gate."""
@@ -507,6 +525,35 @@ def run_kg_workflow(
             dispose = getattr(engine, "dispose", None)
             if callable(dispose):
                 dispose()
+
+
+def run_kg_workflow(
+    config: Path, output_root: Path, *, env: Mapping[str, str] | None = None
+) -> dict[str, object]:
+    """Run the convenience workflow through the public stage owners."""
+    root = _package_root().resolve()
+    guarded_output = guard_output_path(output_root, package_root=root)
+    bindings = {
+        "_package_root": _workflow_stages._package_root,
+        "protected_input_hashes": _workflow_stages.protected_input_hashes,
+        "assert_protected_inputs_unchanged": _workflow_stages.assert_protected_inputs_unchanged,
+        "create_engine_from_env": _workflow_stages.create_engine_from_env,
+        "preflight_official_inputs": _workflow_stages.preflight_official_inputs,
+        "import_source_version": _workflow_stages.import_source_version,
+        "refresh_graph": _workflow_stages.refresh_graph,
+    }
+    _workflow_stages._package_root = _package_root
+    _workflow_stages.protected_input_hashes = protected_input_hashes
+    _workflow_stages.assert_protected_inputs_unchanged = assert_protected_inputs_unchanged
+    _workflow_stages.create_engine_from_env = create_engine_from_env
+    _workflow_stages.preflight_official_inputs = preflight_official_inputs
+    _workflow_stages.import_source_version = import_source_version
+    _workflow_stages.refresh_graph = refresh_graph
+    try:
+        return _run_kg_workflow(config, guarded_output, env=env)
+    finally:
+        for name, original in bindings.items():
+            setattr(_workflow_stages, name, original)
 
 
 @dataclass
@@ -748,8 +795,26 @@ def build_parser() -> argparse.ArgumentParser:
         "classify-jev",
         "extract",
         "materialize",
+        "load-alias-seeds",
+        "discover-aliases-deterministic",
+        "discover-aliases-llm",
+        "list-aliases",
     ):
         _add_config(subparsers.add_parser(name))
+
+    aliases = subparsers.choices["list-aliases"]
+    aliases.add_argument("--status", choices=("pending", "approved", "rejected"))
+    aliases.add_argument("--entity-type", choices=("Product", "Assay"))
+
+    review = subparsers.add_parser("review-alias")
+    _add_config(review)
+    review.add_argument("--alias-id", required=True)
+    review.add_argument("--decision", choices=("approved", "rejected"), required=True)
+    review.add_argument("--reviewer", required=True)
+    review.add_argument("--entity-type", choices=("Product", "Assay"))
+    review.add_argument("--canonical-key")
+    review.add_argument("--canonical-name")
+    review.add_argument("--note")
 
     refresh = subparsers.add_parser("refresh-graph")
     _add_config(refresh)
@@ -790,35 +855,36 @@ def _execute(args: argparse.Namespace, env: Mapping[str, str]) -> object:
             question=args.question,
             trace_output=args.trace_output,
         )
+    if command == "preflight":
+        return preflight_stage(args.config)
+    if command == "import":
+        return import_stage(args.config)
+    if command == "load-alias-seeds":
+        return load_alias_seeds_stage(args.config)
+    if command == "discover-aliases-deterministic":
+        return discover_aliases_deterministic_stage(args.config)
+    if command == "discover-aliases-llm":
+        return discover_aliases_llm_stage(args.config, enabled=True, env=env)
+    if command == "list-aliases":
+        return inspect_aliases_stage(args.config, status=getattr(args, "status", None), entity_type=getattr(args, "entity_type", None))
+    if command == "review-alias":
+        if args.decision == "approved" and not all((args.entity_type, args.canonical_key, args.canonical_name)):
+            raise ValueError("approval requires --entity-type, --canonical-key, and --canonical-name")
+        return review_alias_stage(args.config, AliasDecision(args.alias_id, args.decision, args.reviewer, args.entity_type, args.canonical_key, args.canonical_name, args.note))
+    if command == "embed":
+        return embed_stage(args.config, env=env)
+    if command == "classify-jev":
+        return classify_jev_stage(args.config, env=env)
+    if command == "extract":
+        return extract_stage(args.config, env=env)
+    if command == "materialize":
+        return materialize_stage(args.config)
+    if command == "refresh-graph":
+        return refresh_graph_stage(args.config, mode=args.mode, allow_partial=args.allow_partial, force=args.force)
+    if command == "export-kg":
+        return export_stage(args.config, args.output)
 
     def operation(config: Path, scope: Scope, engine: Engine) -> object:
-        if command == "preflight":
-            return preflight_official_inputs(config)
-        if command == "import":
-            return import_source_version(engine, ImportRequest(config))
-        if command == "embed":
-            return embed_active_passages(engine, scope, _embedding_client(env))
-        if command == "classify-jev":
-            return classify_active_passages(
-                engine, scope, _jev_client(env), JevSelectionPolicy()
-            )
-        if command == "extract":
-            report = extract_selected_passages(
-                engine, scope, _generation_client(env), 1
-            )
-            return {
-                "report": report,
-                "audit": _semantic_audit(engine, scope)["generation"],
-            }
-        if command == "materialize":
-            return materialize_pending_extractions(engine, scope)
-        if command == "refresh-graph":
-            return refresh_graph(
-                engine, scope, args.mode, args.allow_partial, args.force
-            )
-        if command == "export-kg":
-            version = _active_graph_version(engine, scope)
-            return export_or_reuse_graph(engine, scope, args.output, version)
         raise ValueError("unknown command")
 
     return _guarded_config_call(args.config, operation)

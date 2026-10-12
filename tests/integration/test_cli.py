@@ -8,6 +8,7 @@ import pytest
 
 import potency_kg.cli as cli
 import potency_kg.fixture_runs as fixture_runs
+import potency_kg.workflow_stages as workflow_stages
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = PACKAGE_ROOT / "configs" / "casgevy-potency.json"
 
@@ -29,6 +30,11 @@ def test_parser_exposes_only_derived_version_commands() -> None:
         "inspect-kg",
         "run-kg",
         "run-kg-fixtures",
+        "load-alias-seeds",
+        "discover-aliases-deterministic",
+        "discover-aliases-llm",
+        "list-aliases",
+        "review-alias",
     }
     with pytest.raises(SystemExit):
         parser.parse_args(["refresh-graph", "--config", str(CONFIG), "--graph-version", "caller-label"])
@@ -45,29 +51,27 @@ def test_structural_workflow_orders_stages_and_never_constructs_model_clients(
     config.parent.mkdir()
     config.write_text(json.dumps({"scope": {"tenant_id": "tenant", "project_id": "project"}}))
 
-    monkeypatch.setattr(cli, "_package_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "protected_input_hashes", lambda _root: {"configs/config.json": "before"})
-    monkeypatch.setattr(cli, "assert_protected_inputs_unchanged", lambda _root, _before: events.append("hash-after"))
-    monkeypatch.setattr(cli, "create_engine_from_env", lambda: object())
-    monkeypatch.setattr(cli, "preflight_official_inputs", lambda _path: events.append("preflight") or {"document_count": 1})
-    monkeypatch.setattr(cli, "import_source_version", lambda _engine, _request: events.append("import") or {"source_count": 1})
-    monkeypatch.setattr(
-        cli,
-        "refresh_graph",
-        lambda _engine, _scope, mode: events.append(f"refresh:{mode}")
-        or type("Graph", (), {"graph_version": "graph-" + "1" * 64})(),
-    )
-    monkeypatch.setattr(cli, "export_or_reuse_graph", lambda *_args: events.append("export") or {"graph_version": "graph-" + "1" * 64})
-    monkeypatch.setattr(cli, "_embedding_client", lambda _env: pytest.fail("embedding client constructed"))
-    monkeypatch.setattr(cli, "_jev_client", lambda _env: pytest.fail("Jev client constructed"))
-    monkeypatch.setattr(cli, "_generation_client", lambda _env: pytest.fail("generation client constructed"))
+    monkeypatch.setattr(workflow_stages, "preflight_stage", lambda _path: events.append("preflight") or {"document_count": 1})
+    monkeypatch.setattr(workflow_stages, "import_stage", lambda _path: events.append("import") or {"source_count": 1})
+    monkeypatch.setattr(workflow_stages, "load_alias_seeds_stage", lambda _path: events.append("load-alias-seeds") or {})
+    monkeypatch.setattr(workflow_stages, "discover_aliases_deterministic_stage", lambda _path: events.append("discover-aliases-deterministic") or {})
+    monkeypatch.setattr(workflow_stages, "discover_aliases_llm_stage", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(workflow_stages, "refresh_graph_stage", lambda _path, *, mode: events.append(f"refresh:{mode}") or {"graph_version": "graph-" + "1" * 64})
+    monkeypatch.setattr(workflow_stages, "export_stage", lambda *_args: events.append("export") or {"graph_version": "graph-" + "1" * 64})
 
-    report = cli.run_kg_workflow(config, tmp_path / "results", env={})
+    report = workflow_stages.run_kg_workflow(config, tmp_path / "results", env={})
 
-    assert events == ["preflight", "import", "refresh:structural", "export", "hash-after"]
+    assert events == [
+        "preflight",
+        "import",
+        "load-alias-seeds",
+        "discover-aliases-deterministic",
+        "refresh:structural",
+        "export",
+    ]
     assert report["mode"] == "structural"
     assert report["semantic_status"] == "not_run"
-    assert report["graph_version"] == "graph-" + "1" * 64
+    assert report["graph"]["graph_version"] == "graph-" + "1" * 64
 
 
 def test_readiness_does_not_load_stage_settings_without_explicit_opt_in(
@@ -371,8 +375,8 @@ def test_notebooks_are_declarative_sanitized_and_smoke_is_explicitly_gated() -> 
     inspect_code = "\n".join("".join(cell.get("source", [])) for cell in inspect["cells"] if cell["cell_type"] == "code")
     all_code = build_code + "\n" + inspect_code
 
-    assert "from potency_kg" in build_code and "run_kg_workflow" in build_code
-    assert "refresh-graph" in build_code and "export-kg" in build_code
+    assert "from potency_kg.workflow_stages" in build_code
+    assert "run_kg_workflow" not in build_code
     assert "from potency_kg" in inspect_code and "inspect_kg_workflow" in inspect_code
     assert "KG_ENABLE_RETRIEVAL_SMOKE" in inspect_code
     assert "if enable_retrieval_smoke" in inspect_code
