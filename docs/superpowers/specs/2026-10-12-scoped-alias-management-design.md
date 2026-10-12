@@ -1,4 +1,4 @@
-regarding # Scoped Alias Management and Discovery Design
+# Scoped Alias Management and Discovery Design
 
 ## Purpose
 
