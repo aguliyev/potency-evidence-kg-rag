@@ -77,8 +77,42 @@ def test_each_version_changes_with_its_declared_input() -> None:
         "profile": {**profile, "descriptor_sha256": "other-descriptor"},
     }.items():
         assert extraction != derive_extraction_version(**{**extraction_inputs, key: changed})
-    graph = derive_graph_version("schema", [("s", "v")], ["run"], "structural", False, [], "profile")
-    assert graph != derive_graph_version("schema", [("s", "v")], ["run"], "semantic", False, [], "profile")
+    graph = derive_graph_version(
+        Scope("tenant", "project"),
+        "schema",
+        [("s", "v")],
+        ["run"],
+        "structural",
+        False,
+        [],
+        "profile",
+        None,
+        None,
+    )
+    assert graph != derive_graph_version(
+        Scope("tenant", "project"),
+        "schema",
+        [("s", "v")],
+        ["run"],
+        "semantic",
+        False,
+        [],
+        "profile",
+        "index-current",
+        "embedding-current",
+    )
+    assert graph != derive_graph_version(
+        Scope("tenant", "other-project"),
+        "schema",
+        [("s", "v")],
+        ["run"],
+        "structural",
+        False,
+        [],
+        "profile",
+        None,
+        None,
+    )
     assert re.fullmatch(r"kg_[a-f0-9]{16}_[a-f0-9]{16}", derive_graph_name(Scope("tenant", "project"), graph))
 
 

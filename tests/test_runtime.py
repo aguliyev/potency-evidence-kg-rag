@@ -66,3 +66,8 @@ def test_structural_modules_import_without_model_environment() -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_real_models_marker_is_registered(pytestconfig: pytest.Config) -> None:
+    """Running the explicit real-model selection must not emit an unknown-marker warning."""
+    assert any(line.split(":", 1)[0].strip() == "real_models" for line in pytestconfig.getini("markers"))

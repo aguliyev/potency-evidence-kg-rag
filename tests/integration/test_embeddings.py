@@ -285,6 +285,30 @@ def test_duplicate_normalized_inputs_reuse_one_vector_with_distinct_bindings(db_
         assert connection.execute(text("SELECT count(*) FROM index_member")).scalar_one() == 2
 
 
+def test_batch_usage_is_accounted_once_across_unique_inputs(db_engine) -> None:
+    """One provider batch must contribute its usage totals exactly once to the audit sum."""
+    with db_engine.begin() as connection:
+        _insert_active_document(
+            connection,
+            SCOPE_ONE,
+            "v1",
+            [("p1", "first unique text"), ("p2", "second unique text")],
+        )
+    client = _DeterministicClient()
+
+    embed_active_passages(db_engine, SCOPE_ONE, client)
+
+    with db_engine.connect() as connection:
+        usage = connection.execute(
+            text(
+                """SELECT sum(COALESCE((usage->>'prompt_tokens')::bigint,0)),
+                              sum(COALESCE((usage->>'total_tokens')::bigint,0))
+                   FROM embedding_run"""
+            )
+        ).one()
+    assert usage == (2, 2)
+
+
 def test_incompatible_client_batch_rolls_back_without_claiming_success(db_engine) -> None:
     """Persisting a short vector from a protocol implementation would create an unusable succeeded run."""
     with db_engine.begin() as connection:

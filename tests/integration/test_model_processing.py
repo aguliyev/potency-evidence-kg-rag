@@ -79,6 +79,24 @@ def test_extraction_persists_one_complete_grounded_run_with_sanitized_identity(d
     assert state == ("selected", "extraction_validated", None)
 
 
+def test_validated_extraction_is_reused_after_pre_materialization_restart(db_engine) -> None:
+    """Restarting after validation must not repeat a paid request for identical extraction inputs."""
+    with db_engine.begin() as connection:
+        _insert_selected(connection, "CASGEVY was reviewed.", ["product_context"])
+    first_client = _ExtractionDouble([_valid_payload()])
+    first = extract_selected_passages(db_engine, SCOPE, first_client, max_concurrency=1)
+    second_client = _ExtractionDouble([_valid_payload()])
+
+    second = extract_selected_passages(db_engine, SCOPE, second_client, max_concurrency=1)
+
+    assert len(first_client.calls) == 1
+    assert second_client.calls == []
+    assert second.extraction_run_ids == first.extraction_run_ids
+    assert (second.succeeded, second.failed) == (1, 0)
+    with db_engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM llm_extraction_run")).scalar_one() == 1
+
+
 def test_extraction_persists_adapter_level_attempt_count(db_engine) -> None:
     """The immutable run must include transport attempts hidden inside the adapter boundary."""
     with db_engine.begin() as connection:

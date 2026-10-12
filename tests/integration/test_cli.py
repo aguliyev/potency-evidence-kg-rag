@@ -142,6 +142,71 @@ def test_hash_inputs_round_trip_detects_only_path_or_digest_changes(tmp_path: Pa
         cli.hash_inputs(root, verify=snapshot)
 
 
+@pytest.mark.parametrize("protected_name", ["configs", "corpus", "fixtures", "schema"])
+@pytest.mark.parametrize("through_symlink", [False, True])
+def test_hash_output_guard_rejects_every_protected_root_before_write(
+    tmp_path: Path, protected_name: str, through_symlink: bool
+) -> None:
+    """Direct and symlink-aliased destinations must be rejected before protected bytes change."""
+    root = tmp_path / "package"
+    for directory in ("configs", "corpus", "fixtures", "schema"):
+        (root / directory).mkdir(parents=True)
+        (root / directory / "input.txt").write_text(directory)
+    protected = root / protected_name
+    before = (protected / "input.txt").read_bytes()
+    if through_symlink:
+        alias = tmp_path / f"{protected_name}-alias"
+        alias.symlink_to(protected, target_is_directory=True)
+        destination = alias / "snapshot.json"
+    else:
+        destination = protected / "snapshot.json"
+
+    with pytest.raises(ValueError, match="protected output"):
+        cli.hash_inputs(root, output=destination)
+
+    assert (protected / "input.txt").read_bytes() == before
+    assert not (protected / "snapshot.json").exists()
+
+
+def test_run_output_guard_fails_before_any_stage_or_engine_side_effect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A protected run root must be rejected before database or filesystem orchestration starts."""
+    root = tmp_path / "package"
+    config = root / "configs" / "config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"scope": {"tenant_id": "tenant", "project_id": "project"}}))
+    for directory in ("corpus", "fixtures", "schema"):
+        (root / directory).mkdir()
+    monkeypatch.setattr(cli, "_package_root", lambda: root)
+    monkeypatch.setattr(cli, "create_engine_from_env", lambda: pytest.fail("engine constructed"))
+
+    with pytest.raises(ValueError, match="protected output"):
+        cli.run_kg_workflow(config, root / "schema" / "generated", env={})
+
+
+def test_inspection_trace_guard_fails_before_engine_creation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A protected trace destination must be rejected before retrieval can make any request."""
+    root = tmp_path / "package"
+    config = root / "configs" / "config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"scope": {"tenant_id": "tenant", "project_id": "project"}}))
+    for directory in ("corpus", "fixtures", "schema"):
+        (root / directory).mkdir()
+    monkeypatch.setattr(cli, "_package_root", lambda: root)
+    monkeypatch.setattr(cli, "create_engine_from_env", lambda: pytest.fail("engine constructed"))
+
+    with pytest.raises(ValueError, match="protected output"):
+        cli.inspect_kg_workflow(
+            config,
+            env={cli.SMOKE_GATE: "true"},
+            question="question",
+            trace_output=root / "fixtures" / "trace.json",
+        )
+
+
 def test_fixture_output_root_is_exact_and_confined(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Writing fixture artifacts outside results/kg/fixtures must break this test."""
     seen: list[Path] = []

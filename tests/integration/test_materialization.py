@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import text
 
 import potency_kg.resolution as resolution_module
+import potency_kg.cli as cli_module
 from potency_kg.contracts import Scope, ScopedPassageIdentity
 from potency_kg.ids import derive_scoped_id
 from potency_kg.project_profiles import ProjectProfile
@@ -168,7 +169,7 @@ def _insert_run(connection, extraction_run_id: UUID, response: dict[str, object]
 
 
 def _seed_passage(db_engine) -> tuple[UUID, UUID]:
-    previous, candidate = uuid4(), uuid4()
+    previous, candidate, response_id, selection_id = uuid4(), uuid4(), uuid4(), uuid4()
     with db_engine.begin() as connection:
         connection.execute(
             text(
@@ -204,13 +205,103 @@ def _seed_passage(db_engine) -> tuple[UUID, UUID]:
         _insert_run(connection, candidate, _response())
         connection.execute(
             text(
-                """INSERT INTO passage_processing
-                   (tenant_id,project_id,source_id,source_version,passage_id,state,reason,active_extraction_run_id)
-                   VALUES (:tenant,:project,'source','v1','p1','extracted','extracted_successfully',:previous)"""
+                """INSERT INTO jev_response
+                   (response_id,tenant_id,project_id,source_id,source_version,passage_id,
+                    jev_response_version,model,questions,probabilities,input_sha256,
+                    profile_name,profile_aliases,profile_source_sha256,profile_version,status)
+                   VALUES (:response_id,:tenant,:project,'source','v1','p1','jev-response-test',
+                    'jev-test','{}','{}','input-sha','casgevy-v1',CAST(:aliases AS jsonb),
+                    'descriptor-sha','profile-version','succeeded')"""
             ),
-            {"tenant": SCOPE.tenant_id, "project": SCOPE.project_id, "previous": previous},
+            {
+                "response_id": response_id,
+                "tenant": SCOPE.tenant_id,
+                "project": SCOPE.project_id,
+                "aliases": json.dumps(ALIASES),
+            },
+        )
+        connection.execute(
+            text(
+                """INSERT INTO jev_selection
+                   (selection_id,response_id,tenant_id,project_id,source_id,source_version,
+                    passage_id,thresholds,selected_bundles,jev_selection_version)
+                   VALUES (:selection_id,:response_id,:tenant,:project,'source','v1','p1','{}',
+                    '["product_context","alias_identity","assay_evidence"]','selection-test')"""
+            ),
+            {
+                "selection_id": selection_id,
+                "response_id": response_id,
+                "tenant": SCOPE.tenant_id,
+                "project": SCOPE.project_id,
+            },
+        )
+        connection.execute(
+            text(
+                """INSERT INTO passage_processing
+                   (tenant_id,project_id,source_id,source_version,passage_id,state,reason,
+                    active_jev_selection_id,active_extraction_run_id)
+                   VALUES (:tenant,:project,'source','v1','p1','extracted','extracted_successfully',
+                    :selection_id,:previous)"""
+            ),
+            {
+                "tenant": SCOPE.tenant_id,
+                "project": SCOPE.project_id,
+                "selection_id": selection_id,
+                "previous": previous,
+            },
         )
     return previous, candidate
+
+
+def test_materialization_rejects_run_from_prior_active_jev_selection(db_engine) -> None:
+    """A newly active bundle selection must not reactivate a successful older extraction."""
+    _previous, candidate = _seed_passage(db_engine)
+    with db_engine.begin() as connection:
+        response_id, selection_id = uuid4(), uuid4()
+        connection.execute(
+            text(
+                """INSERT INTO jev_response
+                   (response_id,tenant_id,project_id,source_id,source_version,passage_id,
+                    jev_response_version,model,questions,probabilities,input_sha256,
+                    profile_name,profile_aliases,profile_source_sha256,profile_version,status)
+                   VALUES (:response_id,:tenant,:project,'source','v1','p1','jev-response-new',
+                    'jev-test','{}','{}','input-sha','casgevy-v1',CAST(:aliases AS jsonb),
+                    'descriptor-sha','profile-version','succeeded')"""
+            ),
+            {
+                "response_id": response_id,
+                "tenant": SCOPE.tenant_id,
+                "project": SCOPE.project_id,
+                "aliases": json.dumps(ALIASES),
+            },
+        )
+        connection.execute(
+            text(
+                """INSERT INTO jev_selection
+                   (selection_id,response_id,tenant_id,project_id,source_id,source_version,
+                    passage_id,thresholds,selected_bundles,jev_selection_version)
+                   VALUES (:selection_id,:response_id,:tenant,:project,'source','v1','p1','{}',
+                    '["regulatory_history"]','selection-new')"""
+            ),
+            {
+                "selection_id": selection_id,
+                "response_id": response_id,
+                "tenant": SCOPE.tenant_id,
+                "project": SCOPE.project_id,
+            },
+        )
+        connection.execute(
+            text(
+                """UPDATE passage_processing
+                   SET state='selected',reason='jev_bundle_selected',
+                       active_jev_selection_id=:selection_id,active_extraction_run_id=NULL"""
+            ),
+            {"selection_id": selection_id},
+        )
+
+    assert cli_module._pending_materializations(db_engine, SCOPE) == []
+    with pytest.raises(ValueError, match="active Jev selection"):
+        materialize_extraction(db_engine, PASSAGE, candidate)
 
 
 def test_profile_aliases_are_the_only_identity_merges_and_have_profile_provenance(db_engine) -> None:

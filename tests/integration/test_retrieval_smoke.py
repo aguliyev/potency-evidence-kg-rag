@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Sequence
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import event, text
 
 from potency_kg.age_projection import refresh_graph
@@ -163,3 +164,67 @@ def test_retrieval_uses_active_age_topology_and_passage_provenance_for_semantic_
         RetrievalLimits(semantic_seeds=0),
     )
     assert no_seed_trace.seed_node_ids == ()
+
+
+def test_retrieval_rejects_historical_index_not_bound_to_active_graph(db_engine) -> None:
+    """A valid historical scoped index must not seed the graph activated for newer membership."""
+    with db_engine.begin() as connection:
+        params = {"tenant": SCOPE.tenant_id, "project": SCOPE.project_id}
+        connection.execute(
+            text(
+                """INSERT INTO source_document
+                   (tenant_id,project_id,source_id,source_version,title,source_sha256,
+                    expected_passage_count,status)
+                   VALUES (:tenant,:project,'source','v1','title','sha-v1',1,'final')"""
+            ),
+            params,
+        )
+        connection.execute(
+            text(
+                """INSERT INTO source_passage
+                   (tenant_id,project_id,source_id,source_version,passage_id,text,text_sha256)
+                   VALUES (:tenant,:project,'source','v1','p1','old evidence','text-v1')"""
+            ),
+            params,
+        )
+        connection.execute(text("INSERT INTO passage_processing (tenant_id,project_id,source_id,source_version,passage_id,state,reason) VALUES (:tenant,:project,'source','v1','p1','structural_only','none')"), params)
+        connection.execute(text("INSERT INTO source_head (tenant_id,project_id,source_id,source_version) VALUES (:tenant,:project,'source','v1')"), params)
+        write_structural_version(connection, ScopedSourceVersion(*SCOPE.as_tuple(), "source", "v1"))
+    client = _Client()
+    historical = embed_active_passages(db_engine, SCOPE, client)
+
+    with db_engine.begin() as connection:
+        params = {"tenant": SCOPE.tenant_id, "project": SCOPE.project_id}
+        connection.execute(
+            text(
+                """INSERT INTO source_document
+                   (tenant_id,project_id,source_id,source_version,title,source_sha256,
+                    expected_passage_count,status)
+                   VALUES (:tenant,:project,'source','v2','title','sha-v2',1,'final')"""
+            ),
+            params,
+        )
+        connection.execute(
+            text(
+                """INSERT INTO source_passage
+                   (tenant_id,project_id,source_id,source_version,passage_id,text,text_sha256)
+                   VALUES (:tenant,:project,'source','v2','p1','current evidence','text-v2')"""
+            ),
+            params,
+        )
+        connection.execute(text("INSERT INTO passage_processing (tenant_id,project_id,source_id,source_version,passage_id,state,reason) VALUES (:tenant,:project,'source','v2','p1','structural_only','none')"), params)
+        connection.execute(text("UPDATE source_head SET source_version='v2' WHERE tenant_id=:tenant AND project_id=:project AND source_id='source'"), params)
+        write_structural_version(connection, ScopedSourceVersion(*SCOPE.as_tuple(), "source", "v2"))
+    current = embed_active_passages(db_engine, SCOPE, client)
+    refresh_graph(db_engine, SCOPE, mode="semantic")
+
+    assert historical.index_version != current.index_version
+    with pytest.raises(ValueError, match="active graph"):
+        retrieve_graph_smoke(
+            db_engine,
+            SCOPE,
+            "what evidence?",
+            client,
+            historical.index_version,
+            RetrievalLimits(),
+        )
