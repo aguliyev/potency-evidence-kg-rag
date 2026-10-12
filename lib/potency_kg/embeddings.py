@@ -49,6 +49,12 @@ class PassageHit:
     score: float
 
 
+@dataclass(frozen=True)
+class CurrentIndexBinding:
+    index_version: str
+    embedding_version: str
+
+
 def _normalize_input(value: str) -> str:
     return unicodedata.normalize("NFC", value).strip()
 
@@ -99,6 +105,94 @@ def _active_rows(connection: Connection, scope: Scope) -> list[dict[str, object]
             {"tenant": scope.tenant_id, "project": scope.project_id},
         ).mappings()
     ]
+
+
+def validate_index_membership(
+    connection: Connection, scope: Scope, index_version: str
+) -> CurrentIndexBinding:
+    """Require an index's derived identity and rows to equal complete active membership."""
+    embedding_version = connection.execute(
+        text(
+            """SELECT embedding_version FROM index_snapshot
+               WHERE tenant_id=:tenant AND project_id=:project AND index_version=:index_version"""
+        ),
+        {
+            "tenant": scope.tenant_id,
+            "project": scope.project_id,
+            "index_version": index_version,
+        },
+    ).scalar_one_or_none()
+    if embedding_version is None:
+        raise LookupError("exact scoped index version does not exist")
+    active = _active_rows(connection, scope)
+    expected = derive_index_version(
+        str(embedding_version),
+        [
+            (
+                ScopedPassageIdentity(
+                    scope.tenant_id,
+                    scope.project_id,
+                    str(row["source_id"]),
+                    str(row["source_version"]),
+                    str(row["passage_id"]),
+                ),
+                str(row["text_sha256"]),
+            )
+            for row in active
+        ],
+    )
+    member_rows = connection.execute(
+        text(
+            """SELECT member.source_id,member.source_version,member.passage_id,
+                      run.embedding_version,run.status,(run.vector IS NOT NULL) AS has_vector
+               FROM index_member AS member
+               JOIN embedding_run AS run
+                 ON (run.embedding_run_id,run.tenant_id,run.project_id,run.source_id,
+                     run.source_version,run.passage_id)=
+                    (member.embedding_run_id,member.tenant_id,member.project_id,member.source_id,
+                     member.source_version,member.passage_id)
+               WHERE member.tenant_id=:tenant AND member.project_id=:project
+                 AND member.index_version=:index_version"""
+        ),
+        {
+            "tenant": scope.tenant_id,
+            "project": scope.project_id,
+            "index_version": index_version,
+        },
+    ).mappings().all()
+    members = {
+        (str(row["source_id"]), str(row["source_version"]), str(row["passage_id"]))
+        for row in member_rows
+    }
+    active_identities = {
+        (str(row["source_id"]), str(row["source_version"]), str(row["passage_id"]))
+        for row in active
+    }
+    members_are_compatible = all(
+        str(row["embedding_version"]) == str(embedding_version)
+        and str(row["status"]) == "succeeded"
+        and bool(row["has_vector"])
+        for row in member_rows
+    )
+    if expected != index_version or members != active_identities or not members_are_compatible:
+        raise ValueError("index membership does not match current active source heads")
+    return CurrentIndexBinding(index_version, str(embedding_version))
+
+
+def current_index_binding(connection: Connection, scope: Scope) -> CurrentIndexBinding:
+    row = connection.execute(
+        text(
+            """SELECT index_version,embedding_version FROM current_index
+               WHERE tenant_id=:tenant AND project_id=:project"""
+        ),
+        {"tenant": scope.tenant_id, "project": scope.project_id},
+    ).one_or_none()
+    if row is None:
+        raise LookupError("scope has no current semantic index")
+    binding = validate_index_membership(connection, scope, str(row.index_version))
+    if binding.embedding_version != str(row.embedding_version):
+        raise ValueError("current index embedding version is inconsistent")
+    return binding
 
 
 def _existing_binding(connection: Connection, scope: Scope, row: dict[str, object], embedding_version: str, input_sha256: str) -> UUID | None:
@@ -279,6 +373,7 @@ def embed_active_passages(engine: Engine, scope: Scope, client: EmbeddingClient)
         for chunk in _chunks(list(misses_by_hash.values()), 64):
             batch = client.embed([str(group[0]["embedding_input"]) for group in chunk])
             vectors = _validated_batch(client, batch, len(chunk))
+            usage_unassigned = True
             for group, vector in zip(chunk, vectors, strict=True):
                 for position, row in enumerate(group):
                     run_id = _insert_run(
@@ -289,8 +384,9 @@ def embed_active_passages(engine: Engine, scope: Scope, client: EmbeddingClient)
                         client,
                         str(row["input_sha256"]),
                         vector,
-                        batch if position == 0 else None,
+                        batch if usage_unassigned and position == 0 else None,
                     )
+                    usage_unassigned = False
                     bindings[(str(row["source_id"]), str(row["source_version"]), str(row["passage_id"]))] = run_id
                 embedded += 1
                 reused += len(group) - 1
@@ -337,6 +433,22 @@ def embed_active_passages(engine: Engine, scope: Scope, client: EmbeddingClient)
                 ),
                 {"index_version": index_version, "tenant": scope.tenant_id, "project": scope.project_id, "source_id": source_id, "source_version": source_version, "passage_id": passage_id, "run_id": run_id},
             )
+        connection.execute(
+            text(
+                """INSERT INTO current_index
+                   (tenant_id,project_id,index_version,embedding_version)
+                   VALUES (:tenant,:project,:index_version,:embedding_version)
+                   ON CONFLICT (tenant_id,project_id) DO UPDATE
+                   SET index_version=EXCLUDED.index_version,
+                       embedding_version=EXCLUDED.embedding_version,updated_at=now()"""
+            ),
+            {
+                "tenant": scope.tenant_id,
+                "project": scope.project_id,
+                "index_version": index_version,
+                "embedding_version": embedding_version,
+            },
+        )
     return EmbeddingReport(embedding_version, index_version, len(rows), embedded, reused)
 
 

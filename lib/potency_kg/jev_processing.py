@@ -175,7 +175,9 @@ def _cached_response(engine: Engine, item: _Prepared) -> tuple[UUID, JevResponse
 def _mark_structural(engine: Engine, passage: ScopedPassageIdentity, reason: str) -> None:
     with engine.begin() as connection:
         connection.execute(
-            text("""UPDATE passage_processing SET state='structural_only',reason=:reason,active_jev_selection_id=NULL,active_extraction_run_id=NULL,updated_at=now()
+            text("""UPDATE passage_processing SET state='structural_only',reason=:reason,
+                    active_jev_selection_id=NULL,active_extraction_run_id=NULL,
+                    validated_extraction_run_id=NULL,updated_at=now()
                     WHERE (tenant_id,project_id,source_id,source_version,passage_id)=(:tenant,:project,:source_id,:source_version,:passage_id)"""),
             {
                 **dict(zip(("tenant", "project", "source_id", "source_version", "passage_id"), passage.as_tuple(), strict=True)),
@@ -237,7 +239,9 @@ def _persist(
                 },
             )
             connection.execute(
-                text("""UPDATE passage_processing SET state='failed',reason='jev_failed',active_jev_selection_id=NULL,active_extraction_run_id=NULL,updated_at=now()
+                text("""UPDATE passage_processing SET state='failed',reason='jev_failed',
+                        active_jev_selection_id=NULL,active_extraction_run_id=NULL,
+                        validated_extraction_run_id=NULL,updated_at=now()
                         WHERE (tenant_id,project_id,source_id,source_version,passage_id)=(:tenant,:project,:source_id,:source_version,:passage_id)"""),
                 params,
             )
@@ -313,24 +317,26 @@ def _persist(
             )
         current = connection.execute(
             text(
-                """SELECT pp.state,pp.active_extraction_run_id,prior.selected_bundles
+                """SELECT pp.state,pp.active_jev_selection_id,pp.active_extraction_run_id
                     FROM passage_processing AS pp
-                    LEFT JOIN jev_selection AS prior
-                      ON (prior.selection_id,prior.tenant_id,prior.project_id,prior.source_id,prior.source_version,prior.passage_id)=
-                         (pp.active_jev_selection_id,pp.tenant_id,pp.project_id,pp.source_id,pp.source_version,pp.passage_id)
                     WHERE (pp.tenant_id,pp.project_id,pp.source_id,pp.source_version,pp.passage_id)=
                           (:tenant,:project,:source_id,:source_version,:passage_id)"""
             ),
             params,
         ).mappings().one()
-        same_bundles = tuple(current["selected_bundles"] or ()) == selected
         if selected:
-            keep_extraction = same_bundles and current["state"] == "extracted" and current["active_extraction_run_id"] is not None
+            keep_extraction = (
+                current["active_jev_selection_id"] == selection_id
+                and current["state"] == "extracted"
+                and current["active_extraction_run_id"] is not None
+            )
             connection.execute(
                 text(
                     """UPDATE passage_processing
                        SET state=CAST(:state AS processing_state),reason=:reason,active_jev_selection_id=:selection_id,
-                           active_extraction_run_id=CASE WHEN :keep THEN active_extraction_run_id ELSE NULL END,updated_at=now()
+                           active_extraction_run_id=CASE WHEN :keep THEN active_extraction_run_id ELSE NULL END,
+                           validated_extraction_run_id=CASE WHEN :keep THEN validated_extraction_run_id ELSE NULL END,
+                           updated_at=now()
                        WHERE (tenant_id,project_id,source_id,source_version,passage_id)=(:tenant,:project,:source_id,:source_version,:passage_id)"""
                 ),
                 {**params, "state": "extracted" if keep_extraction else "selected", "reason": "extracted_successfully" if keep_extraction else "jev_bundle_selected", "selection_id": selection_id, "keep": keep_extraction},
@@ -339,7 +345,8 @@ def _persist(
             connection.execute(
                 text(
                     """UPDATE passage_processing SET state='structural_only',reason='jev_no_bundle_above_threshold',
-                           active_jev_selection_id=:selection_id,active_extraction_run_id=NULL,updated_at=now()
+                           active_jev_selection_id=:selection_id,active_extraction_run_id=NULL,
+                           validated_extraction_run_id=NULL,updated_at=now()
                        WHERE (tenant_id,project_id,source_id,source_version,passage_id)=(:tenant,:project,:source_id,:source_version,:passage_id)"""
                 ),
                 {**params, "selection_id": selection_id},

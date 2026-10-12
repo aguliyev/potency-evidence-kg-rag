@@ -17,8 +17,10 @@ from sqlalchemy.engine import Connection, Engine
 
 from .age_projection import active_graph_name, graph_counts
 from .contracts import Scope
+from .embeddings import validate_index_membership
 from .graph_store import load_current_projection
 from .ids import canonical_json
+from .output_safety import guard_output_path
 from .project_profiles import trusted_descriptor_path_for_profile
 
 
@@ -33,6 +35,10 @@ _REQUIRED_FILES = frozenset(
         "graph/edges.jsonl",
     }
 )
+
+
+def _package_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)
@@ -85,34 +91,104 @@ def _source_refs(connection: Connection, scope: Scope, table: str, id_column: st
     }:
         raise ValueError("invalid source-reference relation")
     if table == "kg_node_source_ref":
-        provenance_join = """
-            LEFT JOIN assertion AS evidence_assertion
-              ON (evidence_assertion.tenant_id,evidence_assertion.project_id,evidence_assertion.assertion_id) =
+        query = """
+            SELECT ref.node_id AS logical_id,ref.source_id,ref.source_version,ref.passage_id,
+                   passage.text AS quote,passage.locator
+            FROM kg_node_source_ref AS ref
+            JOIN kg_node AS node
+              ON (node.tenant_id,node.project_id,node.node_id)=(ref.tenant_id,ref.project_id,ref.node_id)
+            JOIN source_passage AS passage
+              ON (passage.tenant_id,passage.project_id,passage.source_id,passage.source_version,passage.passage_id)=
+                 (ref.tenant_id,ref.project_id,ref.source_id,ref.source_version,ref.passage_id)
+            JOIN source_head AS head
+              ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
+                 (ref.tenant_id,ref.project_id,ref.source_id,ref.source_version)
+            WHERE ref.tenant_id=:tenant AND ref.project_id=:project
+              AND node.node_type IN ('SourceDocument','SourcePassage')
+            UNION ALL
+            SELECT ref.node_id,ref.source_id,ref.source_version,ref.passage_id,
+                   assertion.original_quote,passage.locator
+            FROM kg_node_source_ref AS ref
+            JOIN assertion
+              ON (assertion.tenant_id,assertion.project_id,assertion.assertion_id)=
                  (ref.tenant_id,ref.project_id,ref.node_id)
+            JOIN passage_processing AS processing
+              ON (processing.tenant_id,processing.project_id,processing.source_id,
+                  processing.source_version,processing.passage_id,processing.active_extraction_run_id)=
+                 (assertion.tenant_id,assertion.project_id,assertion.source_id,
+                  assertion.source_version,assertion.passage_id,assertion.extraction_run_id)
+            JOIN source_head AS head
+              ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
+                 (assertion.tenant_id,assertion.project_id,assertion.source_id,assertion.source_version)
+            JOIN source_passage AS passage
+              ON (passage.tenant_id,passage.project_id,passage.source_id,passage.source_version,passage.passage_id)=
+                 (assertion.tenant_id,assertion.project_id,assertion.source_id,assertion.source_version,assertion.passage_id)
+            WHERE ref.tenant_id=:tenant AND ref.project_id=:project
+              AND processing.state='extracted' AND assertion.original_quote IS NOT NULL
+            UNION ALL
+            SELECT mention_ref.node_id,mention_ref.source_id,mention_ref.source_version,
+                   mention_ref.passage_id,mention.exact_quote,passage.locator
+            FROM kg_node_mention_ref AS mention_ref
+            JOIN entity_mention AS mention
+              ON (mention.extraction_run_id,mention.tenant_id,mention.project_id,mention.source_id,
+                  mention.source_version,mention.passage_id,mention.mention_id)=
+                 (mention_ref.extraction_run_id,mention_ref.tenant_id,mention_ref.project_id,
+                  mention_ref.source_id,mention_ref.source_version,mention_ref.passage_id,
+                  mention_ref.mention_id)
+            JOIN passage_processing AS processing
+              ON (processing.tenant_id,processing.project_id,processing.source_id,
+                  processing.source_version,processing.passage_id,processing.active_extraction_run_id)=
+                 (mention.tenant_id,mention.project_id,mention.source_id,
+                  mention.source_version,mention.passage_id,mention.extraction_run_id)
+            JOIN source_head AS head
+              ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
+                 (mention.tenant_id,mention.project_id,mention.source_id,mention.source_version)
+            JOIN source_passage AS passage
+              ON (passage.tenant_id,passage.project_id,passage.source_id,passage.source_version,passage.passage_id)=
+                 (mention.tenant_id,mention.project_id,mention.source_id,mention.source_version,mention.passage_id)
+            WHERE mention_ref.tenant_id=:tenant AND mention_ref.project_id=:project
+              AND processing.state='extracted' AND mention.exact_quote IS NOT NULL
         """
     else:
-        provenance_join = """
-            LEFT JOIN kg_edge AS evidence_edge
-              ON (evidence_edge.tenant_id,evidence_edge.project_id,evidence_edge.edge_id) =
-                 (ref.tenant_id,ref.project_id,ref.edge_id)
-            LEFT JOIN assertion AS evidence_assertion
-              ON (evidence_assertion.tenant_id,evidence_assertion.project_id,evidence_assertion.assertion_id) =
-                 (evidence_edge.tenant_id,evidence_edge.project_id,evidence_edge.assertion_id)
+        query = """
+            SELECT ref.edge_id AS logical_id,ref.source_id,ref.source_version,ref.passage_id,
+                   passage.text AS quote,passage.locator
+            FROM kg_edge_source_ref AS ref
+            JOIN kg_edge AS edge
+              ON (edge.tenant_id,edge.project_id,edge.edge_id)=(ref.tenant_id,ref.project_id,ref.edge_id)
+            JOIN source_passage AS passage
+              ON (passage.tenant_id,passage.project_id,passage.source_id,passage.source_version,passage.passage_id)=
+                 (ref.tenant_id,ref.project_id,ref.source_id,ref.source_version,ref.passage_id)
+            JOIN source_head AS head
+              ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
+                 (ref.tenant_id,ref.project_id,ref.source_id,ref.source_version)
+            WHERE ref.tenant_id=:tenant AND ref.project_id=:project AND NOT edge.is_evidence
+            UNION ALL
+            SELECT ref.edge_id,ref.source_id,ref.source_version,ref.passage_id,
+                   assertion.original_quote,passage.locator
+            FROM kg_edge_source_ref AS ref
+            JOIN kg_edge AS edge
+              ON (edge.tenant_id,edge.project_id,edge.edge_id)=(ref.tenant_id,ref.project_id,ref.edge_id)
+            JOIN assertion
+              ON (assertion.tenant_id,assertion.project_id,assertion.assertion_id)=
+                 (edge.tenant_id,edge.project_id,edge.assertion_id)
+            JOIN passage_processing AS processing
+              ON (processing.tenant_id,processing.project_id,processing.source_id,
+                  processing.source_version,processing.passage_id,processing.active_extraction_run_id)=
+                 (assertion.tenant_id,assertion.project_id,assertion.source_id,
+                  assertion.source_version,assertion.passage_id,assertion.extraction_run_id)
+            JOIN source_head AS head
+              ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
+                 (assertion.tenant_id,assertion.project_id,assertion.source_id,assertion.source_version)
+            JOIN source_passage AS passage
+              ON (passage.tenant_id,passage.project_id,passage.source_id,passage.source_version,passage.passage_id)=
+                 (assertion.tenant_id,assertion.project_id,assertion.source_id,assertion.source_version,assertion.passage_id)
+            WHERE ref.tenant_id=:tenant AND ref.project_id=:project
+              AND edge.is_evidence AND processing.state='extracted'
+              AND assertion.original_quote IS NOT NULL
         """
     rows = connection.execute(
-        text(
-            f"""SELECT ref.{id_column} AS logical_id,ref.source_id,ref.source_version,
-                       ref.passage_id,COALESCE(evidence_assertion.original_quote,passage.text) AS quote,
-                       passage.locator
-                FROM {table} AS ref
-                JOIN source_passage AS passage
-                  ON (passage.tenant_id,passage.project_id,passage.source_id,
-                      passage.source_version,passage.passage_id) =
-                     (ref.tenant_id,ref.project_id,ref.source_id,ref.source_version,ref.passage_id)
-                {provenance_join}
-                WHERE ref.tenant_id=:tenant AND ref.project_id=:project
-                ORDER BY ref.{id_column},ref.source_id,ref.source_version,ref.passage_id"""
-        ),
+        text(f"SELECT * FROM ({query}) AS current_refs ORDER BY logical_id,source_id,source_version,passage_id,quote"),
         {"tenant": scope.tenant_id, "project": scope.project_id},
     ).mappings()
     result: dict[str, list[dict[str, object]]] = {}
@@ -203,7 +279,7 @@ def _metadata(connection: Connection, scope: Scope, graph_version: str) -> dict[
     params = {"tenant": scope.tenant_id, "project": scope.project_id, "version": graph_version}
     active = connection.execute(
         text(
-            """SELECT active_graph_name,graph_version FROM graph_scope
+            """SELECT active_graph_name,graph_version,index_version,embedding_version FROM graph_scope
                WHERE tenant_id=:tenant AND project_id=:project"""
         ),
         params,
@@ -229,13 +305,18 @@ def _metadata(connection: Connection, scope: Scope, graph_version: str) -> dict[
             params,
         )
     ]
-    index = connection.execute(
-        text(
-            """SELECT index_version,embedding_version FROM index_snapshot
-               WHERE tenant_id=:tenant AND project_id=:project ORDER BY created_at DESC LIMIT 1"""
-        ),
-        params,
-    ).mappings().one_or_none()
+    if str(refresh["mode"]) == "semantic":
+        if active["index_version"] is None or active["embedding_version"] is None:
+            raise ValueError("active semantic graph has no exact index binding")
+        binding = validate_index_membership(connection, scope, str(active["index_version"]))
+        if binding.embedding_version != str(active["embedding_version"]):
+            raise ValueError("active semantic graph embedding binding is inconsistent")
+        index_version: str | None = binding.index_version
+        embedding_version: str | None = binding.embedding_version
+    else:
+        if active["index_version"] is not None or active["embedding_version"] is not None:
+            raise ValueError("structural graph must not carry semantic index metadata")
+        index_version = embedding_version = None
     extraction = connection.execute(
         text(
             """SELECT DISTINCT run.extraction_version,run.profile_name,run.profile_version,
@@ -298,8 +379,8 @@ def _metadata(connection: Connection, scope: Scope, graph_version: str) -> dict[
         "omitted": refresh["omitted"],
         "graph_validation": refresh["validation"],
         "active_heads": heads,
-        "index_version": str(index["index_version"]) if index else None,
-        "embedding_version": str(index["embedding_version"]) if index else None,
+        "index_version": index_version,
+        "embedding_version": embedding_version,
         "extraction": [dict(row) for row in extraction],
         "jev": [dict(row) for row in jev],
         "source_hashes": source_hashes,
@@ -421,19 +502,130 @@ def validate_kg_artifacts(version_dir: Path) -> ExportValidationReport:
     return ExportValidationReport(not errors, len(nodes), len(edges), tuple(errors))
 
 
+def _validate_history_for_current_graph(
+    connection: Connection,
+    scope: Scope,
+    version_dir: Path,
+    graph_version: str,
+) -> ExportValidationReport:
+    """Validate immutable bytes and their exact live scope/graph/content identity."""
+    # Bind the physical graph before reading any reusable bytes and retain the
+    # transaction-scoped shared lock until the caller finishes its operation.
+    active_graph_name(connection, scope)
+    validation = validate_kg_artifacts(version_dir)
+    if not validation.valid:
+        raise ValueError("existing history version is invalid")
+    try:
+        manifest = json.loads((version_dir / "manifest.json").read_text(encoding="utf-8"))
+        stored_nodes = [
+            json.loads(line)
+            for line in (version_dir / "graph/nodes.jsonl").read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        stored_edges = [
+            json.loads(line)
+            for line in (version_dir / "graph/edges.jsonl").read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+    except (OSError, ValueError, TypeError):
+        raise ValueError("existing history version is invalid") from None
+    metadata = _metadata(connection, scope, graph_version)
+    live_nodes, live_edges = _export_rows(
+        connection, scope, str(metadata["mode"]), bool(metadata["allow_partial"])
+    )
+    active_counts = graph_counts(connection, scope)
+    expected_manifest = {
+        "scope": _scope_dict(scope),
+        "graph_version": graph_version,
+        "graph_name": metadata["graph_name"],
+        "projection_mode": metadata["mode"],
+        "allow_partial": metadata["allow_partial"],
+        "active_heads": metadata["active_heads"],
+        "index_version": metadata["index_version"] if metadata["mode"] == "semantic" else None,
+        "embedding_version": metadata["embedding_version"] if metadata["mode"] == "semantic" else None,
+        "source_hashes": metadata["source_hashes"],
+    }
+    if (
+        not isinstance(manifest, dict)
+        or any(manifest.get(key) != value for key, value in expected_manifest.items())
+        or stored_nodes != live_nodes
+        or stored_edges != live_edges
+        or active_counts.as_tuple() != (len(live_nodes), len(live_edges))
+    ):
+        raise ValueError("existing history does not match the current active graph")
+    return validation
+
+
+def validate_history_for_current_graph(
+    engine: Engine,
+    scope: Scope,
+    version_dir: Path,
+    graph_version: str,
+) -> ExportValidationReport:
+    """Validate reusable history against one locked active-graph snapshot."""
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        return _validate_history_for_current_graph(
+            connection, scope, version_dir, graph_version
+        )
+
+
+def promote_history_for_current_graph(
+    engine: Engine,
+    scope: Scope,
+    output_root: Path,
+    graph_version: str,
+) -> ExportReport:
+    """Validate and promote reusable history under one activation boundary lock."""
+    version = _validate_graph_version(graph_version)
+    package_root = _package_root()
+    root = guard_output_path(output_root, package_root=package_root)
+    version_dir = guard_output_path(
+        root / "history" / version,
+        package_root=package_root,
+        boundary=root,
+        label="export output",
+    )
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        validation = _validate_history_for_current_graph(
+            connection, scope, version_dir, version
+        )
+        current = promote_current(root, version)
+    return ExportReport(
+        version,
+        version_dir,
+        current,
+        validation.node_count,
+        validation.edge_count,
+    )
+
+
 def export_graph_version(engine: Engine, scope: Scope, output_root: Path, graph_version: str) -> ExportReport:
     """Stage and validate a version directory before an immutable history rename."""
     version = _validate_graph_version(graph_version)
-    root = output_root.resolve()
-    history = root / "history"
-    target = history / version
+    package_root = _package_root()
+    root = guard_output_path(output_root, package_root=package_root)
+    history = guard_output_path(
+        root / "history", package_root=package_root, boundary=root, label="export output"
+    )
+    target = guard_output_path(
+        history / version, package_root=package_root, boundary=root, label="export output"
+    )
     history.mkdir(parents=True, exist_ok=True)
     if target.exists() or target.is_symlink():
         raise FileExistsError(f"history destination already exists: {version}")
-    staging = root / f".staging-{version}-{uuid4().hex}"
+    staging = guard_output_path(
+        root / f".staging-{version}-{uuid4().hex}",
+        package_root=package_root,
+        boundary=root,
+        label="export output",
+    )
     staging.mkdir(parents=False)
     try:
-        (staging / "graph").mkdir()
+        guard_output_path(
+            staging / "graph", package_root=package_root, boundary=staging, label="export output"
+        ).mkdir()
         with engine.begin() as connection:
             connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             active_graph_name(connection, scope)
@@ -574,7 +766,13 @@ def export_graph_version(engine: Engine, scope: Scope, output_root: Path, graph_
         if not validation.valid:
             raise ValueError("staged KG artifacts failed validation")
         _fsync_tree(staging)
-        os.rename(staging, target)
+        guarded_staging = guard_output_path(
+            staging, package_root=package_root, boundary=root, label="export output"
+        )
+        guarded_target = guard_output_path(
+            target, package_root=package_root, boundary=root, label="export output"
+        )
+        os.rename(guarded_staging, guarded_target)
         history_descriptor = os.open(history, os.O_RDONLY)
         try:
             os.fsync(history_descriptor)
@@ -591,17 +789,35 @@ def export_graph_version(engine: Engine, scope: Scope, output_root: Path, graph_
 def promote_current(output_root: Path, graph_version: str) -> Path:
     """Atomically replace ``current`` with a relative link to validated history."""
     version = _validate_graph_version(graph_version)
-    root = output_root.resolve()
-    target = root / "history" / version
+    package_root = _package_root()
+    root = guard_output_path(output_root, package_root=package_root)
+    target = guard_output_path(
+        root / "history" / version,
+        package_root=package_root,
+        boundary=root,
+        label="export output",
+    )
     validation = validate_kg_artifacts(target)
     if not target.is_dir():
         raise FileNotFoundError(f"history version is missing: {version}")
     if not validation.valid:
         raise ValueError("history version is incomplete or invalid")
-    temporary = root / f".current-{uuid4().hex}"
+    temporary = guard_output_path(
+        root / f".current-{uuid4().hex}",
+        package_root=package_root,
+        boundary=root,
+        label="export output",
+    )
     os.symlink(Path("history") / version, temporary)
     try:
-        os.replace(temporary, root / "current")
+        current = guard_output_path(
+            root / "current",
+            package_root=package_root,
+            boundary=root,
+            label="export output",
+            follow_leaf=False,
+        )
+        os.replace(temporary, current)
         descriptor = os.open(root, os.O_RDONLY)
         try:
             os.fsync(descriptor)

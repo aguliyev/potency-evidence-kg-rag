@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
 from .contracts import ALLOWED_RELATION_ENDPOINTS, NODE_TYPES, ProjectionMode, Scope
+from .embeddings import current_index_binding
 from .graph_store import ProjectionSnapshot, load_current_projection
 from .ids import derive_graph_name, derive_graph_version
 
@@ -657,6 +658,8 @@ def _record_failed_attempt(
     shadow: str,
     previous: str | None,
     omitted: tuple[tuple[str, str, str, str, str, str], ...],
+    index_version: str | None,
+    embedding_version: str | None,
     detail: str,
 ) -> None:
     with engine.begin() as connection:
@@ -674,8 +677,10 @@ def _record_failed_attempt(
             text(
                 """INSERT INTO graph_refresh_run
                    (refresh_run_id,tenant_id,project_id,graph_version,mode,allow_partial,
+                    index_version,embedding_version,
                     shadow_graph_name,previous_graph_name,omitted,validation,status,error_detail,finished_at)
-                   VALUES (:run_id,:tenant,:project,:version,:mode,:allow_partial,:shadow,:previous,
+                   VALUES (:run_id,:tenant,:project,:version,:mode,:allow_partial,
+                           :index_version,:embedding_version,:shadow,:previous,
                            CAST(:omitted AS jsonb),'{}','failed',:detail,now())"""
             ),
             {
@@ -685,6 +690,8 @@ def _record_failed_attempt(
                 "version": graph_version,
                 "mode": mode,
                 "allow_partial": allow_partial,
+                "index_version": index_version,
+                "embedding_version": embedding_version,
                 "shadow": shadow,
                 "previous": previous,
                 "omitted": json.dumps(omitted),
@@ -711,6 +718,8 @@ def refresh_graph(
     graph_version = "graph-unresolved"
     shadow = derive_graph_name(scope, graph_version)
     omissions: tuple[tuple[str, str, str, str, str, str], ...] = ()
+    index_version: str | None = None
+    embedding_version: str | None = None
     try:
         with engine.begin() as connection:
             # Serialize refresh owners without blocking readers during shadow build.
@@ -718,7 +727,17 @@ def refresh_graph(
             heads, extraction_ids, profile_versions, unresolved = _projection_inputs(connection, scope)
             omissions = unresolved if mode == "semantic" else ()
             profile_version = "|".join(profile_versions) if profile_versions else "not-run"
+            if mode == "semantic" and (not omissions or allow_partial):
+                try:
+                    binding = current_index_binding(connection, scope)
+                except (LookupError, ValueError):
+                    raise GraphRefreshError(
+                        "semantic refresh requires exact current index membership"
+                    ) from None
+                index_version = binding.index_version
+                embedding_version = binding.embedding_version
             graph_version = derive_graph_version(
+                scope,
                 PROJECTION_SCHEMA_VERSION,
                 heads,
                 extraction_ids if mode == "semantic" else (),
@@ -726,6 +745,8 @@ def refresh_graph(
                 allow_partial,
                 (item[:5] for item in omissions),
                 profile_version,
+                index_version,
+                embedding_version,
             )
             base_name = derive_graph_name(scope, graph_version)
             current = connection.execute(
@@ -744,10 +765,11 @@ def refresh_graph(
                         text(
                             """INSERT INTO graph_refresh_run
                                (refresh_run_id,tenant_id,project_id,graph_version,mode,
-                                allow_partial,shadow_graph_name,previous_graph_name,omitted,
+                                allow_partial,index_version,embedding_version,
+                                shadow_graph_name,previous_graph_name,omitted,
                                 validation,status,finished_at)
                                VALUES (:run_id,:tenant,:project,:version,:mode,:allow_partial,
-                                       :shadow,:previous,CAST(:omitted AS jsonb),
+                                       :index_version,:embedding_version,:shadow,:previous,CAST(:omitted AS jsonb),
                                        CAST(:validation AS jsonb),'succeeded',now())"""
                         ),
                         {
@@ -757,6 +779,8 @@ def refresh_graph(
                             "version": graph_version,
                             "mode": mode,
                             "allow_partial": allow_partial,
+                            "index_version": index_version,
+                            "embedding_version": embedding_version,
                             "shadow": str(current.active_graph_name),
                             "previous": previous,
                             "omitted": json.dumps(omissions),
@@ -777,8 +801,10 @@ def refresh_graph(
                 text(
                     """INSERT INTO graph_refresh_run
                        (refresh_run_id,tenant_id,project_id,graph_version,mode,allow_partial,
+                        index_version,embedding_version,
                         shadow_graph_name,previous_graph_name,omitted,status)
-                       VALUES (:run_id,:tenant,:project,:version,:mode,:allow_partial,:shadow,
+                       VALUES (:run_id,:tenant,:project,:version,:mode,:allow_partial,
+                               :index_version,:embedding_version,:shadow,
                                :previous,CAST(:omitted AS jsonb),'running')"""
                 ),
                 {
@@ -788,6 +814,8 @@ def refresh_graph(
                     "version": graph_version,
                     "mode": mode,
                     "allow_partial": allow_partial,
+                    "index_version": index_version,
+                    "embedding_version": embedding_version,
                     "shadow": shadow,
                     "previous": previous,
                     "omitted": json.dumps(omissions),
@@ -808,17 +836,21 @@ def refresh_graph(
             connection.execute(
                 text(
                     """INSERT INTO graph_scope
-                       (tenant_id,project_id,active_graph_name,graph_version)
-                       VALUES (:tenant,:project,:graph_name,:version)
+                       (tenant_id,project_id,active_graph_name,graph_version,index_version,embedding_version)
+                       VALUES (:tenant,:project,:graph_name,:version,:index_version,:embedding_version)
                        ON CONFLICT (tenant_id,project_id) DO UPDATE
                        SET active_graph_name=EXCLUDED.active_graph_name,
-                           graph_version=EXCLUDED.graph_version,updated_at=now()"""
+                           graph_version=EXCLUDED.graph_version,
+                           index_version=EXCLUDED.index_version,
+                           embedding_version=EXCLUDED.embedding_version,updated_at=now()"""
                 ),
                 {
                     "tenant": scope.tenant_id,
                     "project": scope.project_id,
                     "graph_name": shadow,
                     "version": graph_version,
+                    "index_version": index_version,
+                    "embedding_version": embedding_version,
                 },
             )
             _inject(failure_at, failure_injector, "after_activation")
@@ -847,7 +879,7 @@ def refresh_graph(
         try:
             _record_failed_attempt(
                 engine, refresh_run_id, scope, graph_version, mode, allow_partial, shadow,
-                previous, omissions, detail,
+                previous, omissions, index_version, embedding_version, detail,
             )
         except Exception:
             raise GraphRefreshError("graph refresh failed and failure history could not be recorded") from None

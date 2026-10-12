@@ -97,6 +97,23 @@ def test_validated_extraction_is_reused_after_pre_materialization_restart(db_eng
         assert connection.execute(text("SELECT count(*) FROM llm_extraction_run")).scalar_one() == 1
 
 
+def test_extraction_reuse_rejects_a_run_with_inconsistent_stored_identity(db_engine) -> None:
+    """A claimed version must not override conflicting immutable model identity fields."""
+    with db_engine.begin() as connection:
+        _insert_selected(connection, "CASGEVY was reviewed.", ["product_context"])
+    extract_selected_passages(db_engine, SCOPE, _ExtractionDouble([_valid_payload()]), 1)
+    with db_engine.begin() as connection:
+        connection.execute(text("UPDATE llm_extraction_run SET model='corrupted-model'"))
+    replacement_client = _ExtractionDouble([_valid_payload()])
+
+    report = extract_selected_passages(db_engine, SCOPE, replacement_client, 1)
+
+    assert len(replacement_client.calls) == 1
+    assert report.succeeded == 1
+    with db_engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM llm_extraction_run")).scalar_one() == 2
+
+
 def test_extraction_persists_adapter_level_attempt_count(db_engine) -> None:
     """The immutable run must include transport attempts hidden inside the adapter boundary."""
     with db_engine.begin() as connection:

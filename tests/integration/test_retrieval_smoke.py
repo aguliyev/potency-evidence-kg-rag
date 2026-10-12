@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Event, Thread
 from typing import Sequence
 from uuid import uuid4
 
@@ -35,6 +36,89 @@ class _Client:
         return EmbeddingBatch("model", vectors, DIMENSIONS, "float", "provider_unit_length_v1", 0, 0)
 
 
+@dataclass
+class _BlockingQueryClient:
+    entered: Event
+    release: Event
+    identity: EmbeddingClientIdentity = _Client.identity
+
+    def embed(self, texts: Sequence[str]) -> EmbeddingBatch:
+        self.entered.set()
+        if not self.release.wait(5):
+            raise TimeoutError("test did not release query embedding")
+        values = tuple(texts)
+        vectors = tuple(tuple(1.0 for _ in range(DIMENSIONS)) for _ in values)
+        return EmbeddingBatch("model", vectors, DIMENSIONS, "float", "provider_unit_length_v1", 0, 0)
+
+
+def test_retrieval_embeds_outside_activation_lock_then_revalidates_exact_binding(db_engine) -> None:
+    """External embedding I/O must not block activation, and stale preflight state must fail closed."""
+    with db_engine.begin() as connection:
+        params = {"tenant": SCOPE.tenant_id, "project": SCOPE.project_id}
+        connection.execute(text("INSERT INTO source_document (tenant_id,project_id,source_id,source_version,title,source_sha256,expected_passage_count,status) VALUES (:tenant,:project,'source','v1','title','sha',1,'final')"), params)
+        connection.execute(text("INSERT INTO source_passage (tenant_id,project_id,source_id,source_version,passage_id,text,text_sha256) VALUES (:tenant,:project,'source','v1','p1','evidence','text-sha')"), params)
+        connection.execute(text("INSERT INTO passage_processing (tenant_id,project_id,source_id,source_version,passage_id,state,reason) VALUES (:tenant,:project,'source','v1','p1','structural_only','none')"), params)
+        connection.execute(text("INSERT INTO source_head (tenant_id,project_id,source_id,source_version) VALUES (:tenant,:project,'source','v1')"), params)
+        write_structural_version(connection, ScopedSourceVersion(*SCOPE.as_tuple(), "source", "v1"))
+    setup_client = _Client()
+    index = embed_active_passages(db_engine, SCOPE, setup_client)
+    refresh_graph(db_engine, SCOPE, mode="semantic")
+
+    embedding_entered = Event()
+    release_embedding = Event()
+    refresh_at_activation = Event()
+    refresh_done = Event()
+    retrieval_errors: list[BaseException] = []
+    refresh_errors: list[BaseException] = []
+
+    def retrieve() -> None:
+        try:
+            retrieve_graph_smoke(
+                db_engine,
+                SCOPE,
+                "what evidence?",
+                _BlockingQueryClient(embedding_entered, release_embedding),
+                index.index_version,
+                RetrievalLimits(),
+            )
+        except BaseException as error:
+            retrieval_errors.append(error)
+
+    def force_refresh() -> None:
+        try:
+            refresh_graph(
+                db_engine,
+                SCOPE,
+                mode="semantic",
+                force=True,
+                failure_injector=lambda point: (
+                    refresh_at_activation.set() if point == "before_activation" else None
+                ),
+            )
+        except BaseException as error:
+            refresh_errors.append(error)
+        finally:
+            refresh_done.set()
+
+    retrieval_thread = Thread(target=retrieve)
+    refresh_thread = Thread(target=force_refresh)
+    retrieval_thread.start()
+    assert embedding_entered.wait(5)
+    refresh_thread.start()
+    assert refresh_at_activation.wait(5)
+    refresh_completed_during_embedding = refresh_done.wait(2)
+    release_embedding.set()
+    retrieval_thread.join(5)
+    refresh_thread.join(5)
+
+    assert not retrieval_thread.is_alive() and not refresh_thread.is_alive()
+    assert refresh_errors == []
+    assert refresh_completed_during_embedding is True
+    assert len(retrieval_errors) == 1
+    assert isinstance(retrieval_errors[0], ValueError)
+    assert "changed during query embedding" in str(retrieval_errors[0])
+
+
 def test_retrieval_embeds_query_and_returns_scoped_source_text_and_bounded_trace(db_engine) -> None:
     """Using another index/scope or AGE text would make the evidence trace irreproducible."""
     with db_engine.begin() as connection:
@@ -56,9 +140,9 @@ def test_retrieval_embeds_query_and_returns_scoped_source_text_and_bounded_trace
         write_structural_version(connection, ScopedSourceVersion(*OTHER_SCOPE.as_tuple(), "source", "v1"))
     client = _Client()
     index = embed_active_passages(db_engine, SCOPE, client)
-    graph = refresh_graph(db_engine, SCOPE, mode="structural")
+    graph = refresh_graph(db_engine, SCOPE, mode="semantic")
     other_index = embed_active_passages(db_engine, OTHER_SCOPE, client)
-    other_graph = refresh_graph(db_engine, OTHER_SCOPE, mode="structural")
+    other_graph = refresh_graph(db_engine, OTHER_SCOPE, mode="semantic")
 
     age_result_sizes: list[int] = []
 

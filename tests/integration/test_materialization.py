@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from uuid import UUID, uuid4
 
 import pytest
@@ -9,7 +10,9 @@ from sqlalchemy import text
 import potency_kg.resolution as resolution_module
 import potency_kg.cli as cli_module
 from potency_kg.contracts import Scope, ScopedPassageIdentity
-from potency_kg.ids import derive_scoped_id
+from potency_kg.extraction import build_response_model
+from potency_kg.ids import canonical_json, derive_extraction_version, derive_scoped_id
+from potency_kg.prompt_resources.extraction import assemble_prompt
 from potency_kg.project_profiles import ProjectProfile
 from potency_kg.resolution import (
     EntityMentionDraft,
@@ -34,6 +37,25 @@ PROFILE = ProjectProfile(
     "profile-version",
     SCOPE,
     {"125785": "casgevy-tdt", "125787": "casgevy-scd"},
+)
+SELECTED_BUNDLES = ("product_context", "alias_identity", "assay_evidence")
+CURRENT_PROMPT_HASH = sha256(assemble_prompt(SELECTED_BUNDLES).encode()).hexdigest()
+CURRENT_SCHEMA_HASH = sha256(
+    canonical_json(build_response_model(SELECTED_BUNDLES).model_json_schema()).encode()
+).hexdigest()
+EXTRACTION_VERSION = derive_extraction_version(
+    model="generation-test",
+    instructor_mode="openai",
+    selected_bundles=SELECTED_BUNDLES,
+    prompt_hash=CURRENT_PROMPT_HASH,
+    schema_hash=CURRENT_SCHEMA_HASH,
+    normalization="redaction-v1",
+    profile={
+        "name": "casgevy-v1",
+        "aliases": ALIASES,
+        "descriptor_sha256": "descriptor-sha",
+        "profile_version": "profile-version",
+    },
 )
 
 
@@ -140,17 +162,42 @@ def _response() -> dict[str, object]:
     }
 
 
-def _insert_run(connection, extraction_run_id: UUID, response: dict[str, object]) -> None:
+def _insert_run(
+    connection,
+    extraction_run_id: UUID,
+    response: dict[str, object],
+    *,
+    prompt_hash: str = CURRENT_PROMPT_HASH,
+    schema_hash: str = CURRENT_SCHEMA_HASH,
+    normalization: str = "redaction-v1",
+    model: str = "generation-test",
+    instructor_mode: str = "openai",
+) -> None:
+    version = derive_extraction_version(
+        model=model,
+        instructor_mode=instructor_mode,
+        selected_bundles=SELECTED_BUNDLES,
+        prompt_hash=prompt_hash,
+        schema_hash=schema_hash,
+        normalization=normalization,
+        profile={
+            "name": "casgevy-v1",
+            "aliases": ALIASES,
+            "descriptor_sha256": "descriptor-sha",
+            "profile_version": "profile-version",
+        },
+    )
     connection.execute(
         text(
             """INSERT INTO llm_extraction_run
                (extraction_run_id,tenant_id,project_id,source_id,source_version,passage_id,
                 extraction_version,model,sanitized_origin,credential_env,instructor_mode,
-                selected_bundles,input_sha256,profile_name,profile_aliases,
+                selected_bundles,prompt_hash,schema_hash,normalization,input_sha256,profile_name,profile_aliases,
                 profile_source_sha256,profile_version,status,response)
                VALUES (:run_id,:tenant,:project,:source_id,:source_version,:passage_id,
-                :version,'generation-test','https://models.example.test/v1','LLM_API_KEY','openai',
-                '["product_context","alias_identity","assay_evidence"]',
+                :version,:model,'https://models.example.test/v1','LLM_API_KEY',:instructor_mode,
+                '["product_context","alias_identity","assay_evidence"]',:prompt_hash,:schema_hash,
+                :normalization,
                 'input-sha','casgevy-v1',CAST(:aliases AS jsonb),'descriptor-sha','profile-version',
                 'succeeded',CAST(:response AS jsonb))"""
         ),
@@ -161,7 +208,12 @@ def _insert_run(connection, extraction_run_id: UUID, response: dict[str, object]
             "source_id": PASSAGE.source_id,
             "source_version": PASSAGE.source_version,
             "passage_id": PASSAGE.passage_id,
-            "version": f"extraction-{extraction_run_id.hex}",
+            "version": version,
+            "prompt_hash": prompt_hash,
+            "schema_hash": schema_hash,
+            "normalization": normalization,
+            "model": model,
+            "instructor_mode": instructor_mode,
             "aliases": json.dumps(ALIASES),
             "response": json.dumps(response),
         },
@@ -239,15 +291,16 @@ def _seed_passage(db_engine) -> tuple[UUID, UUID]:
             text(
                 """INSERT INTO passage_processing
                    (tenant_id,project_id,source_id,source_version,passage_id,state,reason,
-                    active_jev_selection_id,active_extraction_run_id)
+                    active_jev_selection_id,active_extraction_run_id,validated_extraction_run_id)
                    VALUES (:tenant,:project,'source','v1','p1','extracted','extracted_successfully',
-                    :selection_id,:previous)"""
+                    :selection_id,:previous,:candidate)"""
             ),
             {
                 "tenant": SCOPE.tenant_id,
                 "project": SCOPE.project_id,
                 "selection_id": selection_id,
                 "previous": previous,
+                "candidate": candidate,
             },
         )
     return previous, candidate
@@ -302,6 +355,75 @@ def test_materialization_rejects_run_from_prior_active_jev_selection(db_engine) 
     assert cli_module._pending_materializations(db_engine, SCOPE) == []
     with pytest.raises(ValueError, match="active Jev selection"):
         materialize_extraction(db_engine, PASSAGE, candidate)
+
+
+def test_materialization_rejects_candidate_with_stale_normalization(db_engine) -> None:
+    """The candidate normalization must equal the active Jev response normalization."""
+    _previous, candidate = _seed_passage(db_engine)
+    with db_engine.begin() as connection:
+        connection.execute(text("UPDATE jev_response SET normalization='redaction-v2'"))
+        connection.execute(
+            text("UPDATE passage_processing SET state='selected',reason='extraction_validated'")
+        )
+
+    assert cli_module._pending_materializations(db_engine, SCOPE) == []
+    with pytest.raises(ValueError, match="active Jev selection identity"):
+        materialize_extraction(db_engine, PASSAGE, candidate)
+
+
+def test_materialization_rejects_self_consistent_stale_prompt_and_schema(db_engine) -> None:
+    """Candidate hashes cannot define their own current extraction contract."""
+    _previous, candidate = _seed_passage(db_engine)
+    stale_version = derive_extraction_version(
+        model="generation-test",
+        instructor_mode="openai",
+        selected_bundles=SELECTED_BUNDLES,
+        prompt_hash="stale-prompt",
+        schema_hash="stale-schema",
+        normalization="redaction-v1",
+        profile={
+            "name": "casgevy-v1",
+            "aliases": ALIASES,
+            "descriptor_sha256": "descriptor-sha",
+            "profile_version": "profile-version",
+        },
+    )
+    with db_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE llm_extraction_run SET prompt_hash='stale-prompt', "
+                "schema_hash='stale-schema',extraction_version=:version "
+                "WHERE extraction_run_id=:run_id"
+            ),
+            {"version": stale_version, "run_id": candidate},
+        )
+        connection.execute(
+            text("UPDATE passage_processing SET state='selected',reason='extraction_validated'")
+        )
+
+    assert cli_module._pending_materializations(db_engine, SCOPE) == []
+    with pytest.raises(ValueError, match="active Jev selection identity"):
+        materialize_extraction(db_engine, PASSAGE, candidate)
+
+
+def test_materialization_rejects_a_different_self_consistent_adapter_run(db_engine) -> None:
+    """Only the exact run activated by extraction may be materialized, not a compatible historical run."""
+    _previous, candidate = _seed_passage(db_engine)
+    historical = uuid4()
+    with db_engine.begin() as connection:
+        _insert_run(
+            connection,
+            historical,
+            _response(),
+            model="historical-generation",
+            instructor_mode="legacy",
+        )
+
+    with pytest.raises(ValueError, match="active extraction identity"):
+        materialize_extraction(db_engine, PASSAGE, historical)
+
+    report = materialize_extraction(db_engine, PASSAGE, candidate)
+    assert report.extraction_run_id == candidate
 
 
 def test_profile_aliases_are_the_only_identity_merges_and_have_profile_provenance(db_engine) -> None:
@@ -428,7 +550,7 @@ def test_materialization_commits_resolution_provenance_and_current_pointer_toget
         "CGV-X",
         candidate,
         "instructor",
-        f"extraction-{candidate.hex}",
+        EXTRACTION_VERSION,
         "CGV-X",
         "pending",
         *PASSAGE.as_tuple(),

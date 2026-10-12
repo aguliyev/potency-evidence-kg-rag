@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 from sqlalchemy import text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
 from .age_projection import active_graph_name, bounded_graph_traversal
 from .contracts import Scope
 from .embedding_client import EmbeddingClient
-from .embeddings import PassageHit, embed_query, vector_search
+from .embeddings import PassageHit, embed_query, validate_index_membership, vector_search
 from .ids import derive_embedding_version, derive_scoped_id
 
 
@@ -112,6 +112,45 @@ class RetrievalTrace:
         return self.source_refs
 
 
+@dataclass(frozen=True)
+class _ActiveGraphBinding:
+    graph_version: str
+    graph_name: str
+    index_version: str
+    embedding_version: str
+
+
+def _active_graph_binding(
+    connection: Connection,
+    scope: Scope,
+    index_version: str,
+    expected_embedding_version: str,
+) -> _ActiveGraphBinding:
+    graph = connection.execute(
+        text(
+            """SELECT graph_version,active_graph_name,index_version,embedding_version
+               FROM graph_scope WHERE tenant_id=:tenant AND project_id=:project"""
+        ),
+        {"tenant": scope.tenant_id, "project": scope.project_id},
+    ).mappings().one_or_none()
+    if graph is None:
+        raise LookupError("scope has no active graph")
+    if graph["index_version"] is None or str(graph["index_version"]) != index_version:
+        raise ValueError("requested index is not bound to the active graph")
+    binding = validate_index_membership(connection, scope, index_version)
+    if (
+        binding.embedding_version != str(graph["embedding_version"])
+        or binding.embedding_version != expected_embedding_version
+    ):
+        raise ValueError("query adapter does not match the index embedding version")
+    return _ActiveGraphBinding(
+        str(graph["graph_version"]),
+        str(graph["active_graph_name"]),
+        binding.index_version,
+        binding.embedding_version,
+    )
+
+
 def _source_rows(connection, scope: Scope, hits: list[PassageHit]) -> tuple[RetrievedSourceRef, ...]:
     result: list[RetrievedSourceRef] = []
     for hit in hits:
@@ -203,34 +242,21 @@ def retrieve_graph_smoke(
         embedding_client.identity.encoding_format,
         embedding_client.identity.normalization,
     )
+    # This is deliberately an unlocked, short database preflight. The provider
+    # call below must not retain a transaction or block graph activation.
+    with engine.connect() as connection:
+        preflight = _active_graph_binding(
+            connection, scope, index_version, expected_embedding_version
+        )
     query = embed_query(embedding_client, query_text)
     with engine.begin() as connection:
         connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         graph_name = active_graph_name(connection, scope)
-        index_embedding_version = connection.execute(
-            text(
-                """SELECT embedding_version FROM index_snapshot
-                   WHERE tenant_id=:tenant AND project_id=:project AND index_version=:index_version"""
-            ),
-            {
-                "tenant": scope.tenant_id,
-                "project": scope.project_id,
-                "index_version": index_version,
-            },
-        ).scalar_one_or_none()
-        if index_embedding_version is None:
-            raise LookupError("exact scoped index version does not exist")
-        if str(index_embedding_version) != expected_embedding_version:
-            raise ValueError("query adapter does not match the index embedding version")
-        graph = connection.execute(
-            text(
-                """SELECT graph_version FROM graph_scope
-                   WHERE tenant_id=:tenant AND project_id=:project"""
-            ),
-            {"tenant": scope.tenant_id, "project": scope.project_id},
-        ).scalar_one_or_none()
-        if graph is None:
-            raise LookupError("scope has no active graph")
+        current = _active_graph_binding(
+            connection, scope, index_version, expected_embedding_version
+        )
+        if current.graph_name != graph_name or current != preflight:
+            raise ValueError("active graph binding changed during query embedding")
         hits = vector_search(connection, scope, index_version, query.vector, limits.vector_hits)
         source_refs = _source_rows(connection, scope, hits)
         passage_ids = tuple(
@@ -255,7 +281,7 @@ def retrieve_graph_smoke(
         sha256(query_text.encode("utf-8")).hexdigest(),
         expected_embedding_version,
         index_version,
-        str(graph),
+        current.graph_version,
         graph_name,
         limits,
         tuple(hits),

@@ -268,7 +268,8 @@ def _selected_rows(engine: Engine, scope: Scope) -> list[dict[str, object]]:
             for row in connection.execute(
                 text(
                     """
-                    SELECT p.source_id,p.source_version,p.passage_id,p.text,s.selected_bundles,
+                    SELECT p.source_id,p.source_version,p.passage_id,p.text,
+                           pp.active_jev_selection_id,s.selected_bundles,
                            r.profile_name,r.profile_aliases,r.profile_source_sha256,r.profile_version
                     FROM passage_processing AS pp
                     JOIN source_passage AS p
@@ -307,6 +308,138 @@ class _Outcome:
     failure_code: str | None
 
 
+@dataclass(frozen=True)
+class _PreparedExtraction:
+    response_model: type[BaseModel]
+    prompt: str
+    prompt_hash: str
+    schema_hash: str
+    extraction_version: str
+    substitution: RedactionSubstitution
+    input_sha256: str
+
+
+def _prepare_extraction(
+    row: Mapping[str, object], scope: Scope, client: StructuredExtractionClient
+) -> _PreparedExtraction:
+    passage = ScopedPassageIdentity(
+        scope.tenant_id,
+        scope.project_id,
+        str(row["source_id"]),
+        str(row["source_version"]),
+        str(row["passage_id"]),
+    )
+    bundles = tuple(row["selected_bundles"])
+    response_model = build_response_model(bundles)
+    prompt = assemble_prompt(bundles)
+    prompt_hash = sha256(prompt.encode()).hexdigest()
+    schema_hash = sha256(canonical_json(response_model.model_json_schema()).encode()).hexdigest()
+    profile = {
+        "name": row["profile_name"],
+        "aliases": row["profile_aliases"] or {},
+        "descriptor_sha256": row["profile_source_sha256"],
+        "profile_version": row["profile_version"],
+    }
+    extraction_version = derive_extraction_version(
+        model=client.identity.model,
+        instructor_mode=client.identity.instructor_mode,
+        selected_bundles=bundles,
+        prompt_hash=prompt_hash,
+        schema_hash=schema_hash,
+        normalization="redaction-v1",
+        profile=profile,
+    )
+    substitution = substitute_redactions(passage, str(row["text"]))
+    input_sha256 = sha256(substitution.model_text.encode()).hexdigest()
+    return _PreparedExtraction(
+        response_model,
+        prompt,
+        prompt_hash,
+        schema_hash,
+        extraction_version,
+        substitution,
+        input_sha256,
+    )
+
+
+def _reusable_run_id(
+    engine: Engine,
+    scope: Scope,
+    row: Mapping[str, object],
+    client: StructuredExtractionClient,
+) -> UUID | None:
+    prepared = _prepare_extraction(row, scope, client)
+    with engine.connect() as connection:
+        return connection.execute(
+            text(
+                """SELECT extraction_run_id FROM llm_extraction_run
+                   WHERE tenant_id=:tenant AND project_id=:project
+                     AND source_id=:source_id AND source_version=:source_version
+                     AND passage_id=:passage_id AND status='succeeded' AND response IS NOT NULL
+                     AND extraction_version=:extraction_version
+                     AND model=:model AND instructor_mode=:instructor_mode
+                     AND prompt_hash=:prompt_hash AND schema_hash=:schema_hash
+                     AND normalization='redaction-v1'
+                     AND selected_bundles=CAST(:bundles AS jsonb)
+                     AND input_sha256=:input_sha256
+                     AND profile_name IS NOT DISTINCT FROM :profile_name
+                     AND profile_aliases=CAST(:profile_aliases AS jsonb)
+                     AND profile_source_sha256 IS NOT DISTINCT FROM :profile_source_sha256
+                     AND profile_version=:profile_version
+                   ORDER BY created_at DESC,extraction_run_id DESC LIMIT 1"""
+            ),
+            {
+                "tenant": scope.tenant_id,
+                "project": scope.project_id,
+                "source_id": row["source_id"],
+                "source_version": row["source_version"],
+                "passage_id": row["passage_id"],
+                "extraction_version": prepared.extraction_version,
+                "model": client.identity.model,
+                "instructor_mode": client.identity.instructor_mode,
+                "prompt_hash": prepared.prompt_hash,
+                "schema_hash": prepared.schema_hash,
+                "bundles": json.dumps(row["selected_bundles"]),
+                "input_sha256": prepared.input_sha256,
+                "profile_name": row["profile_name"],
+                "profile_aliases": json.dumps(row["profile_aliases"] or {}),
+                "profile_source_sha256": row["profile_source_sha256"],
+                "profile_version": row["profile_version"],
+            },
+        ).scalar_one_or_none()
+
+
+def _activate_reused_run(
+    engine: Engine,
+    scope: Scope,
+    row: Mapping[str, object],
+    run_id: UUID,
+) -> None:
+    with engine.begin() as connection:
+        result = connection.execute(
+            text(
+                """UPDATE passage_processing
+                   SET state='selected',reason='extraction_validated',
+                       validated_extraction_run_id=:run_id,updated_at=now()
+                   WHERE tenant_id=:tenant AND project_id=:project
+                     AND source_id=:source_id AND source_version=:source_version
+                     AND passage_id=:passage_id AND state='selected'
+                     AND active_jev_selection_id=:selection_id"""
+            ),
+            {
+                "run_id": run_id,
+                "tenant": scope.tenant_id,
+                "project": scope.project_id,
+                "source_id": row["source_id"],
+                "source_version": row["source_version"],
+                "passage_id": row["passage_id"],
+                "selection_id": row["active_jev_selection_id"],
+            },
+        )
+        if result.rowcount != 1:
+            raise RuntimeError("active Jev selection changed before extraction reuse activation")
+
+
 def _request_usage(client: StructuredExtractionClient) -> dict[str, int | float | None]:
     accessor = getattr(client, "usage_for_current_thread", None)
     raw = accessor() if callable(accessor) else getattr(client, "last_usage", {})
@@ -340,28 +473,11 @@ def _merge_usage(
 
 
 def _extract_one(row: Mapping[str, object], scope: Scope, client: StructuredExtractionClient) -> _Outcome:
-    passage = ScopedPassageIdentity(scope.tenant_id, scope.project_id, str(row["source_id"]), str(row["source_version"]), str(row["passage_id"]))
     bundles = tuple(row["selected_bundles"])
-    response_model = build_response_model(bundles)
-    prompt = assemble_prompt(bundles)
-    prompt_hash = sha256(prompt.encode()).hexdigest()
-    schema_hash = sha256(canonical_json(response_model.model_json_schema()).encode()).hexdigest()
-    profile = {
-        "name": row["profile_name"],
-        "aliases": row["profile_aliases"] or {},
-        "descriptor_sha256": row["profile_source_sha256"],
-        "profile_version": row["profile_version"],
-    }
-    extraction_version = derive_extraction_version(
-        model=client.identity.model,
-        instructor_mode=client.identity.instructor_mode,
-        selected_bundles=bundles,
-        prompt_hash=prompt_hash,
-        schema_hash=schema_hash,
-        normalization="redaction-v1",
-        profile=profile,
-    )
-    substitution = substitute_redactions(passage, str(row["text"]))
+    prepared = _prepare_extraction(row, scope, client)
+    response_model = prepared.response_model
+    prompt = prepared.prompt
+    substitution = prepared.substitution
     attempts = 0
     usage: dict[str, int | float | None] = {}
     first_metadata_recorded = False
@@ -372,7 +488,7 @@ def _extract_one(row: Mapping[str, object], scope: Scope, client: StructuredExtr
         first_metadata_recorded = True
         parsed = response_model.model_validate(parsed.model_dump() if isinstance(parsed, BaseModel) else parsed)
         grounded = validate_complete_response(parsed, substitution, bundles)
-        return _Outcome(row, uuid4(), grounded, extraction_version, prompt_hash, schema_hash, sha256(substitution.model_text.encode()).hexdigest(), attempts, usage, None)
+        return _Outcome(row, uuid4(), grounded, prepared.extraction_version, prepared.prompt_hash, prepared.schema_hash, prepared.input_sha256, attempts, usage, None)
     except Exception as first_error:
         if not first_metadata_recorded:
             attempts += _request_attempts(client)
@@ -387,14 +503,14 @@ def _extract_one(row: Mapping[str, object], scope: Scope, client: StructuredExtr
                 second_metadata_recorded = True
                 parsed = response_model.model_validate(parsed.model_dump() if isinstance(parsed, BaseModel) else parsed)
                 grounded = validate_complete_response(parsed, substitution, bundles)
-                return _Outcome(row, uuid4(), grounded, extraction_version, prompt_hash, schema_hash, sha256(substitution.model_text.encode()).hexdigest(), attempts, usage, None)
+                return _Outcome(row, uuid4(), grounded, prepared.extraction_version, prepared.prompt_hash, prepared.schema_hash, prepared.input_sha256, attempts, usage, None)
             except Exception as second_error:
                 if not second_metadata_recorded:
                     attempts += _request_attempts(client)
                     usage = _merge_usage(usage, _request_usage(client))
                 code = "unselected_type" if _unselected_error(second_error, set(selected_entity_types(bundles))) else "validation_failed"
-                return _Outcome(row, uuid4(), None, extraction_version, prompt_hash, schema_hash, sha256(substitution.model_text.encode()).hexdigest(), attempts, usage, code)
-        return _Outcome(row, uuid4(), None, extraction_version, prompt_hash, schema_hash, sha256(substitution.model_text.encode()).hexdigest(), attempts, usage, "validation_failed")
+                return _Outcome(row, uuid4(), None, prepared.extraction_version, prepared.prompt_hash, prepared.schema_hash, prepared.input_sha256, attempts, usage, code)
+        return _Outcome(row, uuid4(), None, prepared.extraction_version, prepared.prompt_hash, prepared.schema_hash, prepared.input_sha256, attempts, usage, "validation_failed")
 
 
 def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionClient, outcome: _Outcome) -> None:
@@ -419,6 +535,7 @@ def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionC
         "profile_aliases": json.dumps(row["profile_aliases"] or {}),
         "profile_sha": row["profile_source_sha256"],
         "profile_version": row["profile_version"],
+        "selection_id": row["active_jev_selection_id"],
         "usage": json.dumps(dict(outcome.usage)),
         "attempts": outcome.attempts,
         "response": json.dumps(outcome.response) if outcome.response is not None else None,
@@ -439,11 +556,17 @@ def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionC
                 ),
                 params,
             )
-            connection.execute(
-                text("""UPDATE passage_processing SET state='selected',reason='extraction_validated',updated_at=now()
-                        WHERE (tenant_id,project_id,source_id,source_version,passage_id)=(:tenant,:project,:source_id,:source_version,:passage_id)"""),
+            activated = connection.execute(
+                text("""UPDATE passage_processing
+                        SET state='selected',reason='extraction_validated',
+                            validated_extraction_run_id=:run_id,updated_at=now()
+                        WHERE (tenant_id,project_id,source_id,source_version,passage_id)=
+                              (:tenant,:project,:source_id,:source_version,:passage_id)
+                          AND active_jev_selection_id=:selection_id"""),
                 params,
             )
+            if activated.rowcount != 1:
+                raise RuntimeError("active Jev selection changed before extraction activation")
         else:
             connection.execute(
                 text(
@@ -468,8 +591,12 @@ def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionC
                 {**params, "failure_id": uuid4(), "code": outcome.failure_code},
             )
             connection.execute(
-                text("""UPDATE passage_processing SET state='failed',reason='extraction_failed',active_extraction_run_id=NULL,updated_at=now()
-                        WHERE (tenant_id,project_id,source_id,source_version,passage_id)=(:tenant,:project,:source_id,:source_version,:passage_id)"""),
+                text("""UPDATE passage_processing
+                        SET state='failed',reason='extraction_failed',active_extraction_run_id=NULL,
+                            validated_extraction_run_id=NULL,updated_at=now()
+                        WHERE (tenant_id,project_id,source_id,source_version,passage_id)=
+                              (:tenant,:project,:source_id,:source_version,:passage_id)
+                          AND active_jev_selection_id=:selection_id"""),
                 params,
             )
 
@@ -482,17 +609,36 @@ def extract_selected_passages(
 ) -> ExtractionReport:
     """Extract selected passages concurrently, validating each response atomically before persistence."""
     rows = _selected_rows(engine, scope)
+    reused: dict[tuple[str, str, str], UUID] = {}
+    pending: list[dict[str, object]] = []
+    for row in rows:
+        key = (str(row["source_id"]), str(row["source_version"]), str(row["passage_id"]))
+        run_id = _reusable_run_id(engine, scope, row, client)
+        if run_id is None:
+            pending.append(row)
+        else:
+            _activate_reused_run(engine, scope, row, run_id)
+            reused[key] = run_id
     outcomes: list[_Outcome] = []
     with ThreadPoolExecutor(max_workers=max(1, int(max_concurrency))) as executor:
-        futures = {executor.submit(_extract_one, row, scope, client): row for row in rows}
+        futures = {executor.submit(_extract_one, row, scope, client): row for row in pending}
         for future in as_completed(futures):
             outcomes.append(future.result())
     outcomes.sort(key=lambda value: (str(value.row["source_id"]), str(value.row["source_version"]), str(value.row["passage_id"])))
     for outcome in outcomes:
         _persist_outcome(engine, scope, client, outcome)
+    outcome_by_key = {
+        (str(outcome.row["source_id"]), str(outcome.row["source_version"]), str(outcome.row["passage_id"])): outcome
+        for outcome in outcomes
+    }
+    run_ids = tuple(
+        reused[key] if key in reused else outcome_by_key[key].run_id
+        for row in rows
+        for key in [(str(row["source_id"]), str(row["source_version"]), str(row["passage_id"]))]
+    )
     return ExtractionReport(
         eligible_passages=len(rows),
-        succeeded=sum(outcome.response is not None for outcome in outcomes),
+        succeeded=len(reused) + sum(outcome.response is not None for outcome in outcomes),
         failed=sum(outcome.response is None for outcome in outcomes),
-        extraction_run_ids=tuple(outcome.run_id for outcome in outcomes),
+        extraction_run_ids=run_ids,
     )

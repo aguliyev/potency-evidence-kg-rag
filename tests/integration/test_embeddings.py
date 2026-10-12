@@ -17,7 +17,12 @@ from potency_kg.embedding_client import (
     EmbeddingProtocolError,
     OpenAIEmbeddingClient,
 )
-from potency_kg.embeddings import embed_active_passages, embed_query, vector_search
+from potency_kg.embeddings import (
+    embed_active_passages,
+    embed_query,
+    validate_index_membership,
+    vector_search,
+)
 from potency_kg.ids import derive_embedding_version, derive_index_version
 from potency_kg.settings import load_embedding_settings
 
@@ -307,6 +312,25 @@ def test_batch_usage_is_accounted_once_across_unique_inputs(db_engine) -> None:
             )
         ).one()
     assert usage == (2, 2)
+
+
+def test_index_validation_rejects_member_from_another_embedding_identity(db_engine) -> None:
+    """Exact source membership alone must not bless an incompatible member embedding."""
+    with db_engine.begin() as connection:
+        _insert_active_passage(connection, SCOPE_ONE, "v1", "p1", "text")
+    report = embed_active_passages(db_engine, SCOPE_ONE, _DeterministicClient())
+    with db_engine.begin() as connection:
+        connection.execute(
+            text(
+                """UPDATE embedding_run SET embedding_version='embedding-corrupted'
+                   WHERE tenant_id=:tenant AND project_id=:project"""
+            ),
+            {"tenant": SCOPE_ONE.tenant_id, "project": SCOPE_ONE.project_id},
+        )
+
+    with db_engine.connect() as connection:
+        with pytest.raises(ValueError, match="index membership"):
+            validate_index_membership(connection, SCOPE_ONE, report.index_version)
 
 
 def test_incompatible_client_batch_rolls_back_without_claiming_success(db_engine) -> None:

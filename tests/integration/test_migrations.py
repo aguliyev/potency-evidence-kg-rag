@@ -17,7 +17,8 @@ def test_required_schema_tables_exist(db_engine) -> None:
         "embedding_run", "passage_embedding", "index_snapshot", "index_member", "jev_response",
         "jev_selection", "llm_extraction_run", "validation_failure", "materialization_run",
         "passage_processing", "redaction_mention", "entity_mention", "alias_candidate", "assertion",
-        "kg_node", "kg_edge", "kg_node_source_ref", "kg_edge_source_ref", "graph_scope", "graph_refresh_run",
+        "kg_node", "kg_edge", "kg_node_source_ref", "kg_node_mention_ref", "kg_edge_source_ref",
+        "current_index", "graph_scope", "graph_refresh_run",
     }
     with db_engine.connect() as connection:
         actual = set(connection.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).scalars())
@@ -26,6 +27,20 @@ def test_required_schema_tables_exist(db_engine) -> None:
         ).scalars().all()
     assert expected <= actual
     assert states == ["not_run", "structural_only", "selected", "extracted", "failed"]
+
+
+def test_processing_tracks_the_exact_validated_extraction_candidate(db_engine) -> None:
+    """Materialization needs a durable pointer to the run validated by the extraction stage."""
+    with db_engine.connect() as connection:
+        columns = set(
+            connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='passage_processing'"
+                )
+            ).scalars()
+        )
+    assert "validated_extraction_run_id" in columns
 
 
 def test_composite_provenance_and_scoped_endpoints_are_database_enforced(db_engine) -> None:
@@ -65,6 +80,7 @@ def test_every_passage_reference_and_current_pointer_rejects_cross_project_rows(
         "INSERT INTO kg_edge (tenant_id, project_id, edge_id, edge_type, source_node_id, target_node_id) VALUES ('tenant', 'one', 'cross-endpoint', 'contains_passage', 'n1', 'n2')",
         "INSERT INTO passage_processing (tenant_id, project_id, source_id, source_version, passage_id, state, reason, active_jev_selection_id) VALUES ('tenant', 'one', 'same-source', 'same-version', 'same-passage', 'selected', 'jev_bundle_selected', '00000000-0000-0000-0000-000000000102')",
         "INSERT INTO passage_processing (tenant_id, project_id, source_id, source_version, passage_id, state, reason, active_extraction_run_id) VALUES ('tenant', 'one', 'same-source', 'same-version', 'same-passage', 'extracted', 'extracted_successfully', '00000000-0000-0000-0000-000000000103')",
+        "INSERT INTO passage_processing (tenant_id, project_id, source_id, source_version, passage_id, state, reason, validated_extraction_run_id) VALUES ('tenant', 'one', 'same-source', 'same-version', 'same-passage', 'selected', 'extraction_validated', '00000000-0000-0000-0000-000000000103')",
     ]
     for statement in invalid_statements:
         with pytest.raises(IntegrityError):

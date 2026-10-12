@@ -106,8 +106,33 @@ def derive_extraction_version(
     )
 
 
-def derive_graph_version(projection_schema: str, active_heads: Iterable[tuple[str, str]], active_extraction_ids: Iterable[str], mode: str, allow_partial: bool, omitted: Iterable[ScopedPassageIdentity | tuple[str, ...]], profile_version: str) -> str:
-    return _version("graph", {"projection_schema": projection_schema, "active_heads": sorted(active_heads), "active_extraction_ids": sorted(active_extraction_ids), "mode": mode, "allow_partial": allow_partial, "omitted": sorted(_identity_value(value) for value in omitted), "profile_version": profile_version})
+def derive_graph_version(
+    scope: Scope,
+    projection_schema: str,
+    active_heads: Iterable[tuple[str, str]],
+    active_extraction_ids: Iterable[str],
+    mode: str,
+    allow_partial: bool,
+    omitted: Iterable[ScopedPassageIdentity | tuple[str, ...]],
+    profile_version: str,
+    index_version: str | None,
+    embedding_version: str | None,
+) -> str:
+    return _version(
+        "graph",
+        {
+            "scope": scope.as_tuple(),
+            "projection_schema": projection_schema,
+            "active_heads": sorted(active_heads),
+            "active_extraction_ids": sorted(active_extraction_ids),
+            "mode": mode,
+            "allow_partial": allow_partial,
+            "omitted": sorted(_identity_value(value) for value in omitted),
+            "profile_version": profile_version,
+            "index_version": index_version,
+            "embedding_version": embedding_version,
+        },
+    )
 
 
 def derive_graph_name(scope: Scope, graph_version: str) -> str:

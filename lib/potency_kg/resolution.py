@@ -6,13 +6,16 @@ import json
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from hashlib import sha256
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
 from .contracts import Scope, ScopedPassageIdentity
-from .ids import derive_scoped_id
+from .extraction import build_response_model
+from .ids import canonical_json, derive_extraction_version, derive_scoped_id
+from .prompt_resources.extraction import assemble_prompt
 from .project_profiles import (
     ProjectProfile,
     trusted_applications_for_profile,
@@ -233,6 +236,88 @@ def _params(passage: ScopedPassageIdentity) -> dict[str, object]:
     )
 
 
+def _matching_active_extraction(
+    connection: Connection,
+    passage: ScopedPassageIdentity,
+    extraction_run_id: UUID,
+) -> Mapping[str, object] | None:
+    row = connection.execute(
+        text(
+            """SELECT run.extraction_version,run.model,run.instructor_mode,
+                      run.selected_bundles,run.prompt_hash,run.schema_hash,run.normalization,
+                      run.input_sha256,run.profile_name,run.profile_aliases,
+                      run.profile_source_sha256,run.profile_version,run.response,
+                      selection.selected_bundles AS active_bundles,
+                      response.input_sha256 AS active_input_sha256,
+                      response.profile_name AS active_profile_name,
+                      response.profile_aliases AS active_profile_aliases,
+                      response.profile_source_sha256 AS active_profile_source_sha256,
+                      response.profile_version AS active_profile_version,
+                      response.normalization AS active_normalization,
+                      processing.validated_extraction_run_id
+               FROM passage_processing AS processing
+               JOIN jev_selection AS selection
+                 ON (selection.selection_id,selection.tenant_id,selection.project_id,
+                     selection.source_id,selection.source_version,selection.passage_id)=
+                    (processing.active_jev_selection_id,processing.tenant_id,processing.project_id,
+                     processing.source_id,processing.source_version,processing.passage_id)
+               JOIN jev_response AS response
+                 ON (response.response_id,response.tenant_id,response.project_id,response.source_id,
+                     response.source_version,response.passage_id)=
+                    (selection.response_id,selection.tenant_id,selection.project_id,selection.source_id,
+                     selection.source_version,selection.passage_id)
+               JOIN llm_extraction_run AS run
+                 ON (run.tenant_id,run.project_id,run.source_id,run.source_version,run.passage_id)=
+                    (processing.tenant_id,processing.project_id,processing.source_id,
+                     processing.source_version,processing.passage_id)
+               WHERE processing.tenant_id=:tenant AND processing.project_id=:project
+                 AND processing.source_id=:source_id AND processing.source_version=:source_version
+                 AND processing.passage_id=:passage_id
+                 AND run.extraction_run_id=:extraction_run_id AND run.status='succeeded'"""
+        ),
+        {**_params(passage), "extraction_run_id": extraction_run_id},
+    ).mappings().one_or_none()
+    if row is None:
+        return None
+    if (
+        row["validated_extraction_run_id"] != extraction_run_id
+        or row["normalization"] != row["active_normalization"]
+        or list(row["selected_bundles"] or []) != list(row["active_bundles"] or [])
+        or row["input_sha256"] != row["active_input_sha256"]
+        or row["profile_name"] != row["active_profile_name"]
+        or dict(row["profile_aliases"] or {}) != dict(row["active_profile_aliases"] or {})
+        or row["profile_source_sha256"] != row["active_profile_source_sha256"]
+        or row["profile_version"] != row["active_profile_version"]
+    ):
+        return None
+    profile = {
+        "name": row["profile_name"],
+        "aliases": dict(row["profile_aliases"] or {}),
+        "descriptor_sha256": row["profile_source_sha256"],
+        "profile_version": row["profile_version"],
+    }
+    active_bundles = tuple(row["active_bundles"] or ())
+    current_prompt_hash = sha256(assemble_prompt(active_bundles).encode()).hexdigest()
+    current_schema_hash = sha256(
+        canonical_json(build_response_model(active_bundles).model_json_schema()).encode()
+    ).hexdigest()
+    if (
+        row["prompt_hash"] != current_prompt_hash
+        or row["schema_hash"] != current_schema_hash
+    ):
+        return None
+    expected_version = derive_extraction_version(
+        model=str(row["model"]),
+        instructor_mode=str(row["instructor_mode"]),
+        selected_bundles=active_bundles,
+        prompt_hash=current_prompt_hash,
+        schema_hash=current_schema_hash,
+        normalization=str(row["active_normalization"]),
+        profile=profile,
+    )
+    return row if row["extraction_version"] == expected_version else None
+
+
 def _source_ref(connection: Connection, table: str, identity_column: str, identity: str, passage: ScopedPassageIdentity) -> None:
     connection.execute(
         text(
@@ -310,23 +395,22 @@ def materialize_extraction(
     try:
         with engine.begin() as connection:
             params = {**_params(passage), "extraction_run_id": extraction_run_id}
-            extraction = connection.execute(
+            identity_matches = connection.execute(
                 text(
-                    """SELECT extraction_version,profile_name,profile_aliases,profile_source_sha256,
-                              profile_version,response
-                       FROM llm_extraction_run
+                    """SELECT 1 FROM llm_extraction_run
                        WHERE extraction_run_id=:extraction_run_id AND tenant_id=:tenant
                          AND project_id=:project AND source_id=:source_id
                          AND source_version=:source_version AND passage_id=:passage_id
                          AND status='succeeded'"""
                 ),
                 params,
-            ).mappings().one_or_none()
-            if extraction is None:
+            ).scalar_one_or_none()
+            if identity_matches is None:
                 raise ValueError("extraction run does not match the full passage identity")
             current = connection.execute(
                 text(
-                    """SELECT active_extraction_run_id FROM passage_processing
+                    """SELECT active_extraction_run_id,validated_extraction_run_id
+                       FROM passage_processing
                        WHERE tenant_id=:tenant AND project_id=:project AND source_id=:source_id
                          AND source_version=:source_version AND passage_id=:passage_id
                        FOR UPDATE"""
@@ -335,6 +419,11 @@ def materialize_extraction(
             ).mappings().one_or_none()
             if current is None:
                 raise ValueError("passage has no matching processing state")
+            if current["validated_extraction_run_id"] != extraction_run_id:
+                raise ValueError("extraction run does not match the active extraction identity")
+            extraction = _matching_active_extraction(connection, passage, extraction_run_id)
+            if extraction is None:
+                raise ValueError("extraction run does not match the active Jev selection identity")
             previous = current["active_extraction_run_id"]
             response = extraction["response"]
             if not isinstance(response, dict):
@@ -424,6 +513,20 @@ def materialize_extraction(
                         "model_start": entity.get("model_start"),
                         "model_end": entity.get("model_end"),
                         "exact_quote": entity["original_quote"],
+                    },
+                )
+                connection.execute(
+                    text(
+                        """INSERT INTO kg_node_mention_ref
+                           (tenant_id,project_id,node_id,source_id,source_version,passage_id,
+                            mention_id,extraction_run_id)
+                           VALUES (:tenant,:project,:node_id,:source_id,:source_version,:passage_id,
+                            :mention_id,:extraction_run_id)"""
+                    ),
+                    {
+                        **params,
+                        "node_id": resolved.node_id,
+                        "mention_id": mention_id,
                     },
                 )
                 _source_ref(connection, "kg_node_source_ref", "node_id", resolved.node_id, passage)

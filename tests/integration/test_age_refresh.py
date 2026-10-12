@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from threading import Event, Thread
+from typing import Sequence
 
 import pytest
 from sqlalchemy import text
@@ -14,10 +16,32 @@ from potency_kg.age_projection import (
     refresh_graph,
 )
 from potency_kg.contracts import Scope, ScopedSourceVersion
+from potency_kg.embedding_client import EmbeddingBatch, EmbeddingClientIdentity
+from potency_kg.embeddings import embed_active_passages
 from potency_kg.graph_store import load_current_projection, write_structural_version
 
 
 SCOPE = Scope("tenant", "age-refresh")
+
+
+@dataclass
+class _EmbeddingDouble:
+    identity: EmbeddingClientIdentity = EmbeddingClientIdentity(
+        "test-double", "age-test", 3072, "float", "provider_unit_length_v1",
+        "https://invalid", "KEY",
+    )
+
+    def embed(self, texts: Sequence[str]) -> EmbeddingBatch:
+        values = tuple(texts)
+        return EmbeddingBatch(
+            self.identity.model,
+            tuple((1.0,) * 3072 for _ in values),
+            3072,
+            "float",
+            self.identity.normalization,
+            len(values),
+            len(values),
+        )
 
 
 def _seed(connection, *, passage_state: str = "structural_only") -> None:
@@ -156,6 +180,7 @@ def test_semantic_refresh_refuses_or_exactly_records_unresolved_passages(db_engi
     """Silently omitting selected semantic work would publish a misleading complete version."""
     with db_engine.begin() as connection:
         _seed(connection, passage_state="selected")
+    embed_active_passages(db_engine, SCOPE, _EmbeddingDouble())
 
     with pytest.raises(GraphRefreshError, match="unresolved"):
         refresh_graph(db_engine, SCOPE)

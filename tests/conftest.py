@@ -11,6 +11,13 @@ from sqlalchemy import create_engine, text
 from potency_kg.db import create_engine_from_env
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "real_models: opt-in tests that call configured external model providers",
+    )
+
+
 @pytest.fixture
 def db_engine(monkeypatch: pytest.MonkeyPatch):
     database = f"kg_test_{uuid4().hex}"

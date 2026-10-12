@@ -22,15 +22,22 @@ from .contracts import Scope, ScopedPassageIdentity
 from .db import create_engine_from_env
 from .embedding_client import EmbeddingBatch, EmbeddingClientIdentity, OpenAIEmbeddingClient
 from .embeddings import embed_active_passages
-from .export import ExportReport, export_graph_version, promote_current, validate_kg_artifacts
-from .extraction import extract_selected_passages
+from .export import (
+    ExportReport,
+    export_graph_version,
+    promote_history_for_current_graph,
+)
+from .extraction import build_response_model, extract_selected_passages
 from .fixture_catalog import load_fixture_catalog
 from .fixture_runs import ModelClients, run_kg_fixtures
 from .ingest import ImportRequest, import_source_version, preflight_official_inputs
+from .ids import canonical_json, derive_extraction_version
 from .jev_client import JevClientIdentity, JevResponse, NoulQuestion, TypeSafeJevClient
 from .jev_processing import classify_active_passages
 from .llm_client import GenerationClientIdentity, InstructorExtractionClient
+from .output_safety import guard_output_path
 from .processing_policy import BUNDLE_ORDER, JevSelectionPolicy
+from .prompt_resources.extraction import assemble_prompt
 from .project_profiles import assert_protected_inputs_unchanged, protected_input_hashes
 from .resolution import materialize_extraction
 from .retrieval import RetrievalLimits, retrieve_graph_smoke
@@ -105,9 +112,13 @@ def hash_inputs(root: Path, *, output: Path | None = None, verify: Path | None =
     """Write or verify a path-and-content snapshot without exposing supplied contents."""
     if (output is None) == (verify is None):
         raise ValueError("exactly one of output or verify is required")
-    current = dict(protected_input_hashes(root.resolve()))
+    resolved_root = root.resolve()
+    destination = (
+        guard_output_path(output, package_root=resolved_root) if output is not None else None
+    )
+    current = dict(protected_input_hashes(resolved_root))
     if output is not None:
-        destination = output.resolve()
+        assert destination is not None
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(
             json.dumps({"files": current}, sort_keys=True, separators=(",", ":")) + "\n",
@@ -211,52 +222,94 @@ def export_or_reuse_graph(engine: Engine, scope: Scope, output_root: Path, graph
     root = output_root.resolve()
     version_dir = root / "history" / graph_version
     if version_dir.exists() or version_dir.is_symlink():
-        validation = validate_kg_artifacts(version_dir)
-        if not validation.valid:
-            raise ValueError("existing history version is invalid")
-        current = promote_current(root, graph_version)
-        return ExportReport(graph_version, version_dir, current, validation.node_count, validation.edge_count)
+        return promote_history_for_current_graph(engine, scope, root, graph_version)
     return export_graph_version(engine, scope, root, graph_version)
 
 
 def _pending_materializations(engine: Engine, scope: Scope) -> list[tuple[ScopedPassageIdentity, UUID]]:
     with engine.connect() as connection:
-        rows = connection.execute(
+        rows = list(connection.execute(
             text(
                 """
-                SELECT pp.source_id,pp.source_version,pp.passage_id,run.extraction_run_id
+                SELECT pp.source_id,pp.source_version,pp.passage_id,run.extraction_run_id,
+                       run.extraction_version,run.model,run.instructor_mode,
+                       run.prompt_hash,run.schema_hash,run.normalization,
+                       selection.selected_bundles,response.normalization AS active_normalization,
+                       response.profile_name,response.profile_aliases,
+                       response.profile_source_sha256,response.profile_version
                 FROM passage_processing AS pp
                 JOIN source_head AS head
                   ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
                      (pp.tenant_id,pp.project_id,pp.source_id,pp.source_version)
-                JOIN LATERAL (
-                    SELECT candidate.extraction_run_id
-                    FROM llm_extraction_run AS candidate
-                    WHERE (candidate.tenant_id,candidate.project_id,candidate.source_id,
-                           candidate.source_version,candidate.passage_id)=
-                          (pp.tenant_id,pp.project_id,pp.source_id,pp.source_version,pp.passage_id)
-                      AND candidate.status='succeeded'
-                    ORDER BY candidate.created_at DESC,candidate.extraction_run_id DESC
-                    LIMIT 1
-                ) AS run ON true
+                JOIN jev_selection AS selection
+                  ON (selection.selection_id,selection.tenant_id,selection.project_id,
+                      selection.source_id,selection.source_version,selection.passage_id)=
+                     (pp.active_jev_selection_id,pp.tenant_id,pp.project_id,
+                      pp.source_id,pp.source_version,pp.passage_id)
+                JOIN jev_response AS response
+                  ON (response.response_id,response.tenant_id,response.project_id,
+                      response.source_id,response.source_version,response.passage_id)=
+                     (selection.response_id,selection.tenant_id,selection.project_id,
+                      selection.source_id,selection.source_version,selection.passage_id)
+                JOIN llm_extraction_run AS run
+                  ON (run.extraction_run_id,run.tenant_id,run.project_id,run.source_id,
+                      run.source_version,run.passage_id)=
+                     (pp.validated_extraction_run_id,pp.tenant_id,pp.project_id,pp.source_id,
+                      pp.source_version,pp.passage_id)
                 WHERE pp.tenant_id=:tenant AND pp.project_id=:project AND pp.state='selected'
+                  AND run.status='succeeded'
+                  AND run.selected_bundles=selection.selected_bundles
+                  AND run.input_sha256=response.input_sha256
+                  AND run.profile_version=response.profile_version
+                  AND run.profile_name IS NOT DISTINCT FROM response.profile_name
+                  AND run.profile_aliases=response.profile_aliases
+                  AND run.profile_source_sha256 IS NOT DISTINCT FROM response.profile_source_sha256
+                  AND run.normalization=response.normalization
                 ORDER BY pp.source_id,pp.source_version,pp.passage_id
                 """
             ),
             {"tenant": scope.tenant_id, "project": scope.project_id},
-        ).all()
+        ).mappings())
+    current_rows = []
+    for row in rows:
+        bundles = tuple(row["selected_bundles"] or ())
+        prompt_hash = sha256(assemble_prompt(bundles).encode()).hexdigest()
+        schema_hash = sha256(
+            canonical_json(build_response_model(bundles).model_json_schema()).encode()
+        ).hexdigest()
+        profile = {
+            "name": row["profile_name"],
+            "aliases": dict(row["profile_aliases"] or {}),
+            "descriptor_sha256": row["profile_source_sha256"],
+            "profile_version": row["profile_version"],
+        }
+        expected_version = derive_extraction_version(
+            model=str(row["model"]),
+            instructor_mode=str(row["instructor_mode"]),
+            selected_bundles=bundles,
+            prompt_hash=prompt_hash,
+            schema_hash=schema_hash,
+            normalization=str(row["active_normalization"]),
+            profile=profile,
+        )
+        if (
+            row["prompt_hash"] == prompt_hash
+            and row["schema_hash"] == schema_hash
+            and row["extraction_version"] == expected_version
+        ):
+            current_rows.append(row)
     return [
         (
             ScopedPassageIdentity(
                 scope.tenant_id,
                 scope.project_id,
-                str(row.source_id),
-                str(row.source_version),
-                str(row.passage_id),
+                str(row["source_id"]),
+                str(row["source_version"]),
+                str(row["passage_id"]),
             ),
-            row.extraction_run_id,
+            row["extraction_run_id"],
         )
-        for row in rows
+        for row in current_rows
     ]
 
 
@@ -337,6 +390,7 @@ def run_kg_workflow(config: Path, output_root: Path, *, env: Mapping[str, str] |
     environment = os.environ if env is None else env
     root = _package_root().resolve()
     descriptor = _protected_descriptor(config, root)
+    output_root = guard_output_path(output_root, package_root=root)
     before = dict(protected_input_hashes(root))
     engine: Engine | object | None = None
     stages: list[str] = []
@@ -466,7 +520,7 @@ def run_fixture_workflow(package_root: Path, output_root: Path) -> dict[str, obj
     root = package_root.resolve()
     requested_output = output_root.absolute()
     expected_output = (root / "results" / "kg" / "fixtures").absolute()
-    output = requested_output.resolve()
+    output = guard_output_path(requested_output, package_root=root)
     if requested_output != expected_output or not _inside(output, root):
         raise ValueError("fixture output must be exactly the package results/kg/fixtures directory")
     before = dict(protected_input_hashes(root))
@@ -502,6 +556,9 @@ def inspect_kg_workflow(
     environment = os.environ if env is None else env
     root = _package_root().resolve()
     descriptor = _protected_descriptor(config, root)
+    guarded_trace = (
+        guard_output_path(trace_output, package_root=root) if trace_output is not None else None
+    )
     before = dict(protected_input_hashes(root))
     engine: Engine | object | None = None
     try:
@@ -521,7 +578,7 @@ def inspect_kg_workflow(
             ).mappings().one()
             active = connection.execute(
                 text(
-                    "SELECT graph_version,active_graph_name FROM graph_scope "
+                    "SELECT graph_version,active_graph_name,index_version,embedding_version FROM graph_scope "
                     "WHERE tenant_id=:tenant AND project_id=:project"
                 ),
                 {"tenant": scope.tenant_id, "project": scope.project_id},
@@ -538,16 +595,9 @@ def inspect_kg_workflow(
         if enabled:
             if not question or trace_output is None:
                 raise ValueError("retrieval smoke requires a question and trace output")
-            with engine.connect() as connection:
-                index_version = connection.execute(
-                    text(
-                        "SELECT index_version FROM index_snapshot "
-                        "WHERE tenant_id=:tenant AND project_id=:project ORDER BY created_at DESC LIMIT 1"
-                    ),
-                    {"tenant": scope.tenant_id, "project": scope.project_id},
-                ).scalar_one_or_none()
+            index_version = active["index_version"] if active is not None else None
             if index_version is None:
-                raise ValueError("retrieval smoke requires a persisted semantic index")
+                raise ValueError("retrieval smoke requires an index bound to the active graph")
             trace = retrieve_graph_smoke(
                 engine,
                 scope,
@@ -556,7 +606,8 @@ def inspect_kg_workflow(
                 str(index_version),
                 RetrievalLimits(),
             )
-            destination = trace_output.resolve()
+            assert guarded_trace is not None
+            destination = guarded_trace
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(json.dumps(_jsonable(trace), sort_keys=True, separators=(",", ":")) + "\n")
             report["retrieval_smoke"] = "succeeded"

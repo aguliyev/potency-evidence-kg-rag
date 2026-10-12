@@ -26,6 +26,7 @@ from .jev_processing import JevProcessingReport, classify_active_passages
 from .llm_client import StructuredExtractionClient
 from .processing_policy import JevSelectionPolicy
 from .project_profiles import assert_protected_inputs_unchanged, protected_input_hashes
+from .output_safety import guard_output_path
 from .resolution import materialize_extraction
 from .retrieval import RetrievalLimits, RetrievalTrace, retrieve_graph_smoke
 
@@ -78,21 +79,25 @@ def _read_records(configuration: FixtureRunConfiguration) -> tuple[dict[str, Any
 
 def _write_import_inputs(configuration: FixtureRunConfiguration, output_dir: Path) -> Path:
     """Create an output-local, importer-compatible manifest without modifying fixtures."""
+    run_root = output_dir.resolve(strict=False)
     records = _read_records(configuration)
-    config_dir = output_dir / "configs"
-    corpus_dir = output_dir / "corpus"
-    raw_dir = corpus_dir / "raw" / "fixture-inputs"
+    config_dir = guard_output_path(output_dir / "configs", boundary=run_root, label="fixture output")
+    corpus_dir = guard_output_path(output_dir / "corpus", boundary=run_root, label="fixture output")
+    raw_dir = guard_output_path(corpus_dir / "raw" / "fixture-inputs", boundary=run_root, label="fixture output")
     config_dir.mkdir(parents=True)
     raw_dir.mkdir(parents=True)
-    records_path = corpus_dir / "records.jsonl"
+    records_path = guard_output_path(corpus_dir / "records.jsonl", boundary=run_root, label="fixture output")
     records_path.write_text("".join(canonical_json(row) + "\n" for row in records), encoding="utf-8")
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in records:
         grouped[(str(row["source_id"]), str(row["source_version"]))].append(row)
     sources: list[dict[str, object]] = []
     for index, ((source_id, source_version), source_rows) in enumerate(sorted(grouped.items())):
-        raw_name = f"{index:03d}-{source_id}-{source_version}.jsonl"
-        raw_path = raw_dir / raw_name
+        identity_digest = hashlib.sha256(
+            canonical_json([source_id, source_version]).encode("utf-8")
+        ).hexdigest()[:20]
+        raw_name = f"{index:03d}-{identity_digest}.jsonl"
+        raw_path = guard_output_path(raw_dir / raw_name, boundary=run_root, label="fixture output")
         raw_path.write_text("".join(canonical_json(row) + "\n" for row in source_rows), encoding="utf-8")
         sample = source_rows[0]
         sources.append(
@@ -117,7 +122,7 @@ def _write_import_inputs(configuration: FixtureRunConfiguration, output_dir: Pat
         "scope": {"tenant_id": configuration.scope.tenant_id, "project_id": configuration.scope.project_id},
         "sources": sources,
     }
-    (corpus_dir / "manifest.json").write_text(canonical_json(manifest) + "\n", encoding="utf-8")
+    guard_output_path(corpus_dir / "manifest.json", boundary=run_root, label="fixture output").write_text(canonical_json(manifest) + "\n", encoding="utf-8")
     descriptor = {
         "scope": manifest["scope"],
         "corpus_snapshot": configuration.corpus_snapshot,
@@ -132,7 +137,7 @@ def _write_import_inputs(configuration: FixtureRunConfiguration, output_dir: Pat
             for replacement in configuration.replacements
         ],
     }
-    descriptor_path = config_dir / "import.json"
+    descriptor_path = guard_output_path(config_dir / "import.json", boundary=run_root, label="fixture output")
     descriptor_path.write_text(canonical_json(descriptor) + "\n", encoding="utf-8")
     return descriptor_path
 
@@ -165,7 +170,8 @@ def _verify_reconnect(engine: Engine, reports: tuple[FixtureRunReport, ...], cli
             ).scalar_one()
             if count == 0:
                 return False
-    for report in reports:
+    latest_by_scope = {report.configuration.scope: report for report in reports}
+    for report in latest_by_scope.values():
         repeated = retrieve_graph_smoke(
             engine,
             report.configuration.scope,
@@ -187,12 +193,17 @@ def run_kg_fixtures(
 ) -> FixtureGraphReport:
     """Run every supplied fixture through import, semantic processing, retrieval, and export."""
     _require_offline_test_doubles(clients)
-    root = output_root.resolve()
+    root = guard_output_path(output_root, package_root=catalog.package_root)
     before = dict(protected_input_hashes(catalog.package_root))
     reports: list[FixtureRunReport] = []
     try:
         for configuration in catalog.runs:
-            output_dir = root / configuration.scenario_id / configuration.stage
+            output_dir = guard_output_path(
+                root / configuration.scenario_id / configuration.stage,
+                package_root=catalog.package_root,
+                boundary=root,
+                label="fixture output",
+            )
             output_dir.mkdir(parents=True, exist_ok=False)
             descriptor = _write_import_inputs(configuration, output_dir)
             imported = import_source_version(engine, ImportRequest(descriptor))
