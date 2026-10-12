@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
 
+from .aliases import AliasCatalog
 from .contracts import Scope
+from .ids import canonical_json
 
 
 CASGEVY_APPLICATIONS: Mapping[str, str] = MappingProxyType(
@@ -27,12 +27,6 @@ def trusted_applications_for_profile(profile_name: str) -> Mapping[str, str]:
 
 def trusted_descriptor_path_for_profile(profile_name: str) -> str:
     return TRUSTED_PROFILE_DESCRIPTOR_PATHS.get(profile_name, "")
-
-
-def _scope_parts(scope: Any) -> tuple[str, str]:
-    if isinstance(scope, tuple):
-        return scope
-    return scope.tenant_id, scope.project_id
 
 
 def _digest(data: bytes) -> str:
@@ -62,46 +56,41 @@ def assert_protected_inputs_unchanged(root: Path, before: Mapping[str, str]) -> 
 @dataclass(frozen=True)
 class ProjectProfile:
     name: str
-    aliases: Mapping[str, str]
     descriptor_path: str
     descriptor_sha256: str
     profile_version: str
+    alias_catalog: AliasCatalog
     scope: Scope | None = None
     applications: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
+    @property
+    def aliases(self) -> Mapping[str, str]:
+        """Compatibility projection of the approved catalog for older semantic callers."""
+        return MappingProxyType({entry.alias_value: entry.canonical_key for entry in self.alias_catalog.entries})
 
-def load_project_profile(scope: Any, descriptor: Path) -> ProjectProfile:
-    tenant_id, project_id = _scope_parts(scope)
+
+def load_project_profile(scope: Scope, descriptor: Path, alias_catalog: AliasCatalog) -> ProjectProfile:
+    if alias_catalog.scope != scope:
+        raise ValueError("project profile catalog must use the requested scope")
     descriptor_hash = _digest(descriptor.read_bytes())
-    aliases: dict[str, str]
     name: str
-    if (tenant_id, project_id) == ("public-fda", "casgevy-potency"):
+    if scope == Scope("public-fda", "casgevy-potency"):
         name = "casgevy-v1"
-        aliases = {
-            "CASGEVY": "casgevy",
-            "exagamglogene autotemcel": "casgevy",
-            "exa-cel": "casgevy",
-        }
     else:
-        name, aliases = "empty-v1", {}
+        name = "empty-v1"
     applications = dict(trusted_applications_for_profile(name))
-    version_input = json.dumps(
-        {
-            "name": name,
-            "descriptor_sha256": descriptor_hash,
-            "aliases": aliases,
-            "applications": applications,
-        },
-        sort_keys=True,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    version_input = canonical_json({
+        "name": name,
+        "descriptor_sha256": descriptor_hash,
+        "applications": applications,
+        "alias_catalog_version": alias_catalog.version,
+    })
     return ProjectProfile(
         name=name,
-        aliases=MappingProxyType(aliases),
         descriptor_path=str(descriptor),
         descriptor_sha256=descriptor_hash,
         profile_version=f"profile-{_digest(version_input.encode())}",
-        scope=Scope(tenant_id, project_id),
+        alias_catalog=alias_catalog,
+        scope=scope,
         applications=MappingProxyType(applications),
     )

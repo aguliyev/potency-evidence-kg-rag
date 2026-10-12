@@ -125,8 +125,11 @@ def upgrade() -> None:
             REFERENCES aliases(tenant_id, project_id, alias_id),
           CONSTRAINT fk_alias_evidence_passage FOREIGN KEY
             (tenant_id, project_id, source_id, source_version, passage_id)
-            REFERENCES source_passage(tenant_id, project_id, source_id, source_version, passage_id)
-            MATCH FULL,
+            REFERENCES source_passage(tenant_id, project_id, source_id, source_version, passage_id),
+          CONSTRAINT ck_alias_evidence_source_identity CHECK (
+            (source_id IS NULL AND source_version IS NULL AND passage_id IS NULL) OR
+            (source_id IS NOT NULL AND source_version IS NOT NULL AND passage_id IS NOT NULL)
+          ),
           CONSTRAINT fk_alias_evidence_extraction FOREIGN KEY
             (extraction_run_id, tenant_id, project_id, source_id, source_version, passage_id)
             REFERENCES llm_extraction_run(extraction_run_id, tenant_id, project_id, source_id, source_version, passage_id),

@@ -142,6 +142,9 @@ def test_scoped_alias_registry_enforces_schema_and_review_invariants(db_engine) 
             "WHERE contype='f' AND conrelid IN "
             "('alias_evidence'::regclass, 'alias_discovery_run'::regclass)"
         )).scalars())
+        evidence_checks = set(connection.execute(text(
+            "SELECT conname FROM pg_constraint WHERE conrelid='alias_evidence'::regclass AND contype='c'"
+        )).scalars())
     assert {"aliases", "alias_evidence", "alias_discovery_run"} <= tables
     assert registry_columns == {
         "aliases": {
@@ -167,17 +170,23 @@ def test_scoped_alias_registry_enforces_schema_and_review_invariants(db_engine) 
     assert all(default is None for default in semantic_defaults.values())
     assert {
         "FOREIGN KEY (tenant_id, project_id, alias_id) REFERENCES aliases(tenant_id, project_id, alias_id)",
-        "FOREIGN KEY (tenant_id, project_id, source_id, source_version, passage_id) REFERENCES source_passage(tenant_id, project_id, source_id, source_version, passage_id) MATCH FULL",
+        "FOREIGN KEY (tenant_id, project_id, source_id, source_version, passage_id) REFERENCES source_passage(tenant_id, project_id, source_id, source_version, passage_id)",
         "FOREIGN KEY (extraction_run_id, tenant_id, project_id, source_id, source_version, passage_id) REFERENCES llm_extraction_run(extraction_run_id, tenant_id, project_id, source_id, source_version, passage_id)",
         "FOREIGN KEY (tenant_id, project_id, discovery_run_id) REFERENCES alias_discovery_run(tenant_id, project_id, discovery_run_id)",
         "FOREIGN KEY (tenant_id, project_id, source_id, source_version) REFERENCES source_document(tenant_id, project_id, source_id, source_version)",
     } <= foreign_keys
+    assert {"ck_alias_evidence_source_identity", "ck_alias_evidence_extraction_scope"} <= evidence_checks
 
     with db_engine.begin() as connection:
         connection.execute(text(
             "INSERT INTO aliases "
             "(tenant_id,project_id,alias_id,alias_value,normalized_alias,entity_type,canonical_key,canonical_name,status,managed_by,normalization_version) "
             "VALUES ('tenant','one','approved-a','Alias A','alias a','Product','product-a','Product A','approved','review','v1')"
+        ))
+        connection.execute(text(
+            """INSERT INTO alias_evidence
+               (tenant_id,project_id,evidence_id,alias_id,source_type,detector_name,detector_version,input_sha256)
+               VALUES ('tenant','one','static-without-passage','approved-a','static_config','seed','v1','hash')"""
         ))
     invalid_statements = [
         "INSERT INTO aliases (tenant_id,project_id,alias_id,alias_value,normalized_alias,status,managed_by,normalization_version) VALUES ('tenant','one','approved-missing','Alias A','alias a','approved','review','v1')",
@@ -189,6 +198,7 @@ def test_scoped_alias_registry_enforces_schema_and_review_invariants(db_engine) 
         "INSERT INTO aliases (tenant_id,project_id,alias_id,alias_value,normalized_alias,entity_type,canonical_key,canonical_name,status,managed_by,normalization_version,decided_at,decided_by) VALUES ('tenant','one','static-rejected-wrong-auditor','Alias B','alias b','Product','product-b','Product B','rejected','static_config','v1',now(),'reviewer')",
         "INSERT INTO aliases (tenant_id,project_id,alias_id,alias_value,normalized_alias,status,managed_by,normalization_version) VALUES ('tenant','one','rejected-undecided','Alias C','alias c','rejected','review','v1')",
         "INSERT INTO aliases (tenant_id,project_id,alias_id,alias_value,normalized_alias,entity_type,canonical_key,canonical_name,status,managed_by,normalization_version) VALUES ('tenant','one','approved-conflict','Alias A again','alias a','Product','product-b','Product B','approved','review','v1')",
+        "INSERT INTO alias_evidence (tenant_id,project_id,evidence_id,alias_id,source_type,passage_id,detector_name,detector_version,input_sha256) VALUES ('tenant','one','partial-passage','approved-a','deterministic_rule','same-passage','detector','v1','hash')",
         "INSERT INTO alias_evidence (tenant_id,project_id,evidence_id,alias_id,source_type,extraction_run_id,detector_name,detector_version,input_sha256) VALUES ('tenant','one','unscoped-extraction','approved-a','extraction','00000000-0000-0000-0000-000000000501','detector','v1','hash')",
         "INSERT INTO alias_evidence (tenant_id,project_id,evidence_id,alias_id,source_type,source_id,source_version,passage_id,detector_name,detector_version,input_sha256) VALUES ('tenant','two','cross-project-evidence','approved-a','extraction','same-source','same-version','same-passage','detector','v1','hash')",
     ]

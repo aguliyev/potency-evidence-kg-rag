@@ -1,0 +1,13 @@
+{
+  "schema_version": "scoped-alias-seeds-v1",
+  "entries": [
+    {
+      "tenant_id": "public-fda",
+      "project_id": "casgevy-potency",
+      "entity_type": "Product",
+      "canonical_key": "casgevy",
+      "canonical_name": "CASGEVY",
+      "aliases": ["CASGEVY", "exagamglogene autotemcel", "exa-cel"]
+    }
+  ]
+}
