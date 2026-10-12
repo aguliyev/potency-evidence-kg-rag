@@ -34,12 +34,16 @@ class ResolvedJevThresholds:
 class JevSelectionPolicy:
     """Resolve per-bundle thresholds; lower values trade more cost/noise for recall."""
 
-    def resolve(self, overrides: Mapping[BundleName, float]) -> ResolvedJevThresholds:
-        unknown = set(overrides) - set(BUNDLE_ORDER)
+    def __init__(self, overrides: Mapping[BundleName, float] | None = None) -> None:
+        self._overrides = dict(overrides or {})
+
+    def resolve(self, overrides: Mapping[BundleName, float] | None = None) -> ResolvedJevThresholds:
+        requested = {**self._overrides, **dict(overrides or {})}
+        unknown = set(requested) - set(BUNDLE_ORDER)
         if unknown:
             raise ValueError(f"unknown Jev bundle overrides: {sorted(unknown)}")
         merged = dict(DEFAULT_THRESHOLDS)
-        for name, value in overrides.items():
+        for name, value in requested.items():
             if not 0 <= value <= 1:
                 raise ValueError("thresholds must be probabilities")
             merged[name] = value

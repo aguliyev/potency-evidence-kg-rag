@@ -4,11 +4,29 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+
+from .contracts import Scope
+
+
+CASGEVY_APPLICATIONS: Mapping[str, str] = MappingProxyType(
+    {"125785": "casgevy-tdt", "125787": "casgevy-scd"}
+)
+TRUSTED_PROFILE_DESCRIPTOR_PATHS: Mapping[str, str] = MappingProxyType(
+    {"casgevy-v1": "configs/casgevy-potency.json"}
+)
+
+
+def trusted_applications_for_profile(profile_name: str) -> Mapping[str, str]:
+    return CASGEVY_APPLICATIONS if profile_name == "casgevy-v1" else MappingProxyType({})
+
+
+def trusted_descriptor_path_for_profile(profile_name: str) -> str:
+    return TRUSTED_PROFILE_DESCRIPTOR_PATHS.get(profile_name, "")
 
 
 def _scope_parts(scope: Any) -> tuple[str, str]:
@@ -48,6 +66,8 @@ class ProjectProfile:
     descriptor_path: str
     descriptor_sha256: str
     profile_version: str
+    scope: Scope | None = None
+    applications: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
 
 def load_project_profile(scope: Any, descriptor: Path) -> ProjectProfile:
@@ -64,8 +84,14 @@ def load_project_profile(scope: Any, descriptor: Path) -> ProjectProfile:
         }
     else:
         name, aliases = "empty-v1", {}
+    applications = dict(trusted_applications_for_profile(name))
     version_input = json.dumps(
-        {"name": name, "descriptor_sha256": descriptor_hash, "aliases": aliases},
+        {
+            "name": name,
+            "descriptor_sha256": descriptor_hash,
+            "aliases": aliases,
+            "applications": applications,
+        },
         sort_keys=True,
         ensure_ascii=False,
         separators=(",", ":"),
@@ -76,4 +102,6 @@ def load_project_profile(scope: Any, descriptor: Path) -> ProjectProfile:
         descriptor_path=str(descriptor),
         descriptor_sha256=descriptor_hash,
         profile_version=f"profile-{_digest(version_input.encode())}",
+        scope=Scope(tenant_id, project_id),
+        applications=MappingProxyType(applications),
     )
