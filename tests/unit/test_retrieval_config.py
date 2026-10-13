@@ -20,6 +20,7 @@ def test_graph_score_adds_hop_and_edge_bonus() -> None:
     plain = config.graph_score(0.5, 1, None)
     assert plain == pytest.approx(0.5 + 0.05)
     assert config.graph_score(0.5, 1, "proposed_in") == pytest.approx(plain + 0.05)
+    assert config.graph_score(0.5, 0, None) == pytest.approx(0.5 + 0.05)  # the seed entity itself
     assert config.graph_score(0.5, 3, "applies_to") == pytest.approx(0.5 + 0.01)
 
 
@@ -28,13 +29,13 @@ def test_graph_score_adds_hop_and_edge_bonus() -> None:
     [
         {"graph_share": 1.5},
         {"neighbors_per_entity": 0},
-        {"max_hops": 2},  # hop_bonus still has 3 values
+        {"max_hops": 2},  # hop_bonus still has 4 values
         {"traversal": "age"},  # default 3 hops exceeds the AGE cap
         {"edge_type_bonus": (("a", 0.1), ("a", 0.2))},
         {"similarity_weight": 0.0},
         {"seed_vector_hits": 9},  # more than vector_hits
         {"direction": "up"},
-        {"traversal": "age", "max_hops": 2, "hop_bonus": (0.05, 0.03), "direction": "out"},
+        {"traversal": "age", "max_hops": 2, "hop_bonus": (0.05, 0.05, 0.03), "direction": "out"},
         {"max_passages_per_document": 0},
         {"graph_min_cosine": 2.0},
         {"context_order": "random"},

@@ -164,11 +164,12 @@ class HybridRetrievalConfig:
     # Multiplier of the question-passage cosine similarity in the graph score.
     similarity_weight: float = 1.0
 
-    # Bonus added by distance from the seed, one value per hop (index 0 = hop 1). Closer
-    # entities are usually more directly related, so the defaults decrease with the hop.
-    # Must have exactly `max_hops` values. Starting values: to be fixed from the
-    # measurement step, then frozen.
-    hop_bonus: tuple[float, ...] = (0.05, 0.03, 0.01)
+    # Bonus added by distance from the seed, one value per hop, index = hop. Hop 0 is the
+    # seed entity itself: its OTHER cited passages (its other mentions in the corpus) are
+    # candidates too. Closer entities are usually more directly related, so the defaults
+    # decrease with the hop. Must have exactly `max_hops + 1` values. Starting values:
+    # to be fixed from the measurement step, then frozen.
+    hop_bonus: tuple[float, ...] = (0.05, 0.05, 0.03, 0.01)
 
     # Bonus by the type of the relation used to reach an entity, as (edge_type, bonus)
     # pairs (a tuple, so the config stays hashable and immutable). Types not listed get
@@ -277,8 +278,8 @@ class HybridRetrievalConfig:
             raise ValueError("graph_share must be between 0 and 1")
         if not self.similarity_weight > 0:
             raise ValueError("similarity_weight must be positive")
-        if len(self.hop_bonus) != self.max_hops:
-            raise ValueError("hop_bonus needs exactly one value per hop (max_hops values)")
+        if len(self.hop_bonus) != self.max_hops + 1:
+            raise ValueError("hop_bonus needs one value per hop 0..max_hops (max_hops + 1 values)")
         if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in self.hop_bonus):
             raise ValueError("hop_bonus values must be numbers")
         edge_types = [edge_type for edge_type, _ in self.edge_type_bonus]
@@ -296,8 +297,8 @@ class HybridRetrievalConfig:
         return dict(self.edge_type_bonus).get(edge_type, 0.0)
 
     def hop_weight(self, hop: int) -> float:
-        """Bonus for an entity first reached at `hop` (1-based); 0.0 for hop 0 or beyond."""
-        return self.hop_bonus[hop - 1] if 1 <= hop <= len(self.hop_bonus) else 0.0
+        """Bonus for an entity first reached at `hop` (0 = the seed itself); 0.0 beyond."""
+        return self.hop_bonus[hop] if 0 <= hop < len(self.hop_bonus) else 0.0
 
     def graph_score(self, cosine: float, hop: int, edge_type: str | None) -> float:
         """Score of a graph candidate; the single place the scoring formula lives."""
