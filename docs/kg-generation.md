@@ -51,7 +51,7 @@ no model adapter and needs none of the model variables.
 | Stage | Variables | Contract |
 |---|---|---|
 | Embedding | `EMBEDDING_LLM_URI`, `EMBEDDING_LLM_MODEL`, `EMBEDDING_LLM_API_KEY` | Official origin `https://api.openai.com/v1`, model `text-embedding-3-large`, float encoding, 3072 dimensions |
-| Extraction | `LLM_URI`, `LLM_MODEL`, `LLM_API_KEY` | Instructor model identifier is derived as `openai/<LLM_MODEL>` |
+| Extraction | `LLM_URI`, `LLM_MODEL`, `LLM_API_KEY` | Any OpenAI-compatible endpoint; switch provider by changing `LLM_URI`, `LLM_MODEL` and `LLM_API_KEY` together (e.g. `https://api.anthropic.com/v1` + `claude-opus-5-5`). Instructor model identifier is derived as `openai/<LLM_MODEL>`; `api.anthropic.com` automatically uses Instructor's markdown-JSON mode |
 | Jev classification | `TYPESAFE_API_KEY` | One TypeSafe/Jev request carries all seven fixed Noul questions |
 
 No stage reads or remaps `OPENAI_API_KEY`. Real adapters are disabled unless

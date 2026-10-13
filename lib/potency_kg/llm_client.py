@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from threading import local
+from time import monotonic
+from urllib.parse import urlsplit
 from typing import Protocol
+import logging
 
 import instructor
 from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
@@ -49,6 +52,15 @@ class GenerationUnselectedTypeError(GenerationProtocolError):
 _TRANSIENT = (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError, TimeoutError, ConnectionError)
 
 
+logger = logging.getLogger(__name__)
+
+
+# Anthropic's OpenAI-compatible endpoint rejects forced tool_choice (Instructor's openai default) on
+# adaptive-thinking models, so use markdown-JSON mode there. Other endpoints keep the default.
+def _mode_for(settings: GenerationSettings) -> instructor.Mode | None:
+    return instructor.Mode.MD_JSON if urlsplit(settings.sanitized_origin).hostname == "api.anthropic.com" else None
+
+
 def _contains_unselected_type(error: ValidationError, response_model: type[BaseModel]) -> bool:
     allowed = set(getattr(response_model, "__allowed_entity_types__", ()))
     if not allowed:
@@ -70,11 +82,13 @@ class InstructorExtractionClient:
 
     def __init__(self, settings: GenerationSettings, api_key: SecretStr, client: object | None = None) -> None:
         self._settings = settings
+        mode = _mode_for(settings)
         try:
             self._client = client if client is not None else instructor.from_provider(
                 settings.instructor_model,
                 base_url=str(settings.base_url),
                 api_key=api_key.get_secret_value(),
+                **({"mode": mode} if mode else {}),
             )
         except Exception:
             raise GenerationProtocolError("generation client construction failed") from None
@@ -83,7 +97,7 @@ class InstructorExtractionClient:
             model=settings.model,
             sanitized_origin=settings.sanitized_origin,
             credential_env=settings.credential_env,
-            instructor_mode="openai",
+            instructor_mode=mode.value if mode else "openai",
             max_attempts=settings.max_attempts,
         )
         self._request_state = local()
@@ -132,10 +146,16 @@ class InstructorExtractionClient:
         }
         self._request_state.usage = {}
         self._request_state.attempts = 0
+        # Log only sizes and outcome types: text, prompts, and error details stay out of logs.
+        logger.info("generation request: model=%s origin=%s mode=%s input_chars=%d prompt_chars=%d max_attempts=%d",
+                    self._settings.model, self._settings.sanitized_origin, self.identity.instructor_mode,
+                    len(model_text), len(prompt), self._settings.max_attempts)
+        started = monotonic()
         attempts = 0
         while attempts < self._settings.max_attempts:
             attempts += 1
             self._request_state.attempts = attempts
+            attempt_started = monotonic()
             try:
                 create_with_completion = getattr(self._client, "create_with_completion", None)
                 if create_with_completion is not None:
@@ -147,16 +167,25 @@ class InstructorExtractionClient:
                         create = self._client.chat.completions.create
                         kwargs["model"] = self._settings.model
                     result = create(**kwargs)
+                logger.info("generation request succeeded: attempt=%d elapsed=%.1fs usage=%s",
+                            attempts, monotonic() - started, self._request_state.usage)
                 return result if isinstance(result, response_model) else response_model.model_validate(result)
-            except _TRANSIENT:
+            except _TRANSIENT as error:
+                logger.warning("generation request transient failure: attempt=%d/%d error=%s elapsed=%.1fs",
+                               attempts, self._settings.max_attempts, type(error).__name__,
+                               monotonic() - attempt_started)
                 if attempts >= self._settings.max_attempts:
                     raise GenerationTransientError("generation request failed after transient retries") from None
             except ValidationError as error:
+                logger.warning("generation response failed validation: attempt=%d errors=%d",
+                               attempts, error.error_count())
                 if _contains_unselected_type(error, response_model):
                     raise GenerationUnselectedTypeError(
                         "generation response used a type outside selected bundles"
                     ) from None
                 raise GenerationProtocolError("generation response failed schema validation") from None
-            except Exception:
+            except Exception as error:
+                logger.warning("generation request failed: attempt=%d error=%s elapsed=%.1fs",
+                               attempts, type(error).__name__, monotonic() - attempt_started)
                 raise GenerationProtocolError("generation request failed") from None
         raise GenerationTransientError("generation request failed after transient retries")

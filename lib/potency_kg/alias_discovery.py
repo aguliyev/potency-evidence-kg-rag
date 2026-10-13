@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
@@ -27,6 +29,8 @@ LLM_ALIAS_DETECTOR = "structured-document-alias-discovery"
 LLM_ALIAS_DETECTOR_VERSION = "structured-document-alias-discovery-v1"
 MAX_ALIAS_DISCOVERY_CHARACTERS = 48_000
 ALIAS_DISCOVERY_OVERLAP_PASSAGES = 1
+
+logger = logging.getLogger(__name__)
 
 
 class AliasDiscoveryItem(BaseModel):
@@ -577,22 +581,43 @@ def discover_aliases_llm(
     schema_hash = sha256(canonical_json(AliasDiscoveryResponse.model_json_schema()).encode()).hexdigest()
     with engine.connect() as connection:
         documents = _active_documents(connection, scope)
+    identity = client.identity
+    # ponytail: prints stay high-level (document titles) for the notebook cell; details go to logging.
+    print(f"[alias-llm] discovering aliases in {len(documents)} document(s) with {identity.model}", flush=True)
+    logger.info("alias-llm start: documents=%d model=%s origin=%s mode=%s prompt=%.12s schema=%.12s",
+                len(documents), identity.model, identity.sanitized_origin, identity.instructor_mode,
+                prompt_hash, schema_hash)
+    started = time.monotonic()
     succeeded = failed = reused = proposals = evidence_inserted = 0
     run_ids: list[UUID] = []
-    for document in documents:
+    for position, document in enumerate(documents, start=1):
+        title = f"{document.source_id}@{document.source_version}"
+        tag = f"[alias-llm] {position}/{len(documents)} {title}"
         input_sha256 = _llm_input_hash(document)
         with engine.connect() as connection:
             reusable = _successful_llm_run_id(connection, scope, document, input_sha256, client, prompt_hash, schema_hash)
         if reusable is not None:
+            print(f"{tag}: already done, reusing", flush=True)
+            logger.info("%s: reusing succeeded run %s (input=%.12s)", title, reusable, input_sha256)
             reused += 1
             run_ids.append(reusable)
             continue
         run_id = uuid4()
         usage: dict[str, int | float | None] = {}
         attempts = 0
+        print(f"{tag}: processing", flush=True)
         try:
+            windows = _document_windows(document)
+            chars = sum(len(body) for _identity, body, _text_hash in document.passages)
+            logger.info("%s: input=%.12s passages=%d chars=%d windows=%d run=%s",
+                        title, input_sha256, len(document.passages), chars, len(windows), run_id)
             grounded: list[AliasProposal] = []
-            for window in _document_windows(document):
+            for window_position, window in enumerate(windows, start=1):
+                passage_ids = [identity_.passage_id for identity_, _body, _text_hash in window]
+                window_chars = sum(len(body) for _identity, body, _text_hash in window)
+                logger.info("%s: sending window %d/%d (chars=%d passages=%s)",
+                            title, window_position, len(windows), window_chars, passage_ids)
+                call_started = time.monotonic()
                 try:
                     response = client.extract(_window_model_text(window), AliasDiscoveryResponse, prompt)
                 finally:
@@ -600,13 +625,21 @@ def discover_aliases_llm(
                     # accounting must capture every window, including a failed one.
                     usage = _merge_usage(usage, _usage_for_current_thread(client))
                     attempts += _attempts_for_current_thread(client)
+                elapsed = time.monotonic() - call_started
                 if not isinstance(response, AliasDiscoveryResponse):
                     response = AliasDiscoveryResponse.model_validate(response)
+                logger.info("%s: window %d/%d received %d alias(es) in %.1fs (attempts=%d usage=%s)",
+                            title, window_position, len(windows), len(response.aliases), elapsed, attempts, usage)
+                before = len(grounded)
                 grounded.extend(_ground_llm_response(
                     document,
                     response,
-                    allowed_passage_ids={identity.passage_id for identity, _body, _text_hash in window},
+                    allowed_passage_ids={identity_.passage_id for identity_, _body, _text_hash in window},
                 ))
+                logger.debug("%s: window %d/%d grounded %d/%d proposal(s)",
+                             title, window_position, len(windows), len(grounded) - before, len(response.aliases))
+            logger.info("%s: writing %d proposal(s) to DB (run=%s)", title, len(grounded), run_id)
+            db_started = time.monotonic()
             with engine.begin() as connection:
                 _insert_llm_run(connection, scope, run_id, document, input_sha256, client, prompt_hash, schema_hash,
                                 status="running", usage=usage, attempts=attempts, counts={})
@@ -620,13 +653,24 @@ def discover_aliases_llm(
                        WHERE tenant_id=:tenant_id AND project_id=:project_id AND discovery_run_id=:run_id"""
                 ), {"tenant_id": scope.tenant_id, "project_id": scope.project_id, "run_id": run_id,
                     "counts": json.dumps({"proposals": len(grounded), "evidence_inserted": inserted}, sort_keys=True)})
+            logger.info("%s: DB write done in %.1fs: %d proposal(s), %d evidence row(s) inserted (run=%s)",
+                        title, time.monotonic() - db_started, len(grounded), inserted, run_id)
+            print(f"{tag}: done, {len(grounded)} proposal(s)", flush=True)
             succeeded += 1
             proposals += len(grounded)
             evidence_inserted += inserted
-        except Exception:
+        except Exception as error:
+            # Log only the exception type: messages may carry provider diagnostics.
+            logger.warning("%s: failed with %s, recording failed run %s", title, type(error).__name__, run_id)
+            print(f"{tag}: failed ({type(error).__name__})", flush=True)
             with engine.begin() as connection:
                 _insert_llm_run(connection, scope, run_id, document, input_sha256, client, prompt_hash, schema_hash,
                                 status="failed", usage=usage, attempts=max(attempts, 1), counts={}, error="alias discovery failed")
             failed += 1
         run_ids.append(run_id)
+    elapsed_total = time.monotonic() - started
+    logger.info("alias-llm finished in %.1fs: documents=%d succeeded=%d failed=%d reused=%d proposals=%d evidence=%d",
+                elapsed_total, len(documents), succeeded, failed, reused, proposals, evidence_inserted)
+    print(f"[alias-llm] finished: {succeeded} succeeded, {failed} failed, {reused} reused, "
+          f"{proposals} proposal(s)", flush=True)
     return AliasDiscoveryReport("llm", len(documents), succeeded, failed, reused, proposals, evidence_inserted, run_ids)
