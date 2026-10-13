@@ -313,6 +313,8 @@ class _Outcome:
     attempts: int
     usage: Mapping[str, int | float | None]
     failure_code: str | None
+    raw_response: dict[str, object] | None = None  # model output before grounding/validation
+    error_detail: str | None = None
 
 
 @dataclass(frozen=True)
@@ -486,41 +488,42 @@ def _extract_one(row: Mapping[str, object], scope: Scope, client: StructuredExtr
     bundles = tuple(row["selected_bundles"])
     prepared = _prepare_extraction(row, scope, client)
     response_model = prepared.response_model
-    prompt = prepared.prompt
     substitution = prepared.substitution
+    allowed = set(selected_entity_types(bundles))
     attempts = 0
     usage: dict[str, int | float | None] = {}
-    first_metadata_recorded = False
-    try:
-        parsed = client.extract(substitution.model_text, response_model, prompt)
-        attempts += _request_attempts(client)
-        usage = _merge_usage(usage, _request_usage(client))
-        first_metadata_recorded = True
-        parsed = response_model.model_validate(parsed.model_dump() if isinstance(parsed, BaseModel) else parsed)
-        grounded = validate_complete_response(parsed, substitution, bundles)
-        return _Outcome(row, uuid4(), grounded, prepared.extraction_version, prepared.prompt_hash, prepared.schema_hash, prepared.input_sha256, attempts, usage, None)
-    except Exception as first_error:
-        if not first_metadata_recorded:
+    raw: dict[str, object] | None = None
+
+    def run(prompt: str) -> dict[str, object]:
+        nonlocal attempts, usage, raw
+        try:
+            parsed = client.extract(substitution.model_text, response_model, prompt)
+        except Exception:
             attempts += _request_attempts(client)
             usage = _merge_usage(usage, _request_usage(client))
-        if _unselected_error(first_error, set(selected_entity_types(bundles))):
-            emphasized = f"{prompt}\n{RETRY_INSTRUCTION}\nUse only these entity types: {', '.join(selected_entity_types(bundles))}."
-            second_metadata_recorded = False
-            try:
-                parsed = client.extract(substitution.model_text, response_model, emphasized)
-                attempts += _request_attempts(client)
-                usage = _merge_usage(usage, _request_usage(client))
-                second_metadata_recorded = True
-                parsed = response_model.model_validate(parsed.model_dump() if isinstance(parsed, BaseModel) else parsed)
-                grounded = validate_complete_response(parsed, substitution, bundles)
-                return _Outcome(row, uuid4(), grounded, prepared.extraction_version, prepared.prompt_hash, prepared.schema_hash, prepared.input_sha256, attempts, usage, None)
-            except Exception as second_error:
-                if not second_metadata_recorded:
-                    attempts += _request_attempts(client)
-                    usage = _merge_usage(usage, _request_usage(client))
-                code = "unselected_type" if _unselected_error(second_error, set(selected_entity_types(bundles))) else "validation_failed"
-                return _Outcome(row, uuid4(), None, prepared.extraction_version, prepared.prompt_hash, prepared.schema_hash, prepared.input_sha256, attempts, usage, code)
-        return _Outcome(row, uuid4(), None, prepared.extraction_version, prepared.prompt_hash, prepared.schema_hash, prepared.input_sha256, attempts, usage, "validation_failed")
+            raise
+        attempts += _request_attempts(client)
+        usage = _merge_usage(usage, _request_usage(client))
+        parsed = response_model.model_validate(parsed.model_dump() if isinstance(parsed, BaseModel) else parsed)
+        raw = parsed.model_dump(mode="json")
+        return validate_complete_response(parsed, substitution, bundles)
+
+    def outcome(response: dict[str, object] | None, code: str | None = None, error: BaseException | None = None) -> _Outcome:
+        detail = None if error is None else f"{type(error).__name__}: {error}"
+        return _Outcome(row, uuid4(), response, prepared.extraction_version, prepared.prompt_hash,
+                        prepared.schema_hash, prepared.input_sha256, attempts, usage, code, raw, detail)
+
+    try:
+        return outcome(run(prepared.prompt))
+    except Exception as first_error:
+        if not _unselected_error(first_error, allowed):
+            return outcome(None, "validation_failed", first_error)
+        emphasized = f"{prepared.prompt}\n{RETRY_INSTRUCTION}\nUse only these entity types: {', '.join(selected_entity_types(bundles))}."
+        try:
+            return outcome(run(emphasized))
+        except Exception as second_error:
+            code = "unselected_type" if _unselected_error(second_error, allowed) else "validation_failed"
+            return outcome(None, code, second_error)
 
 
 def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionClient, outcome: _Outcome) -> None:
@@ -550,6 +553,8 @@ def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionC
         "usage": json.dumps(dict(outcome.usage)),
         "attempts": outcome.attempts,
         "response": json.dumps(outcome.response) if outcome.response is not None else None,
+        "raw_response": json.dumps(outcome.raw_response) if outcome.raw_response is not None else None,
+        "error_detail": outcome.error_detail,
     }
     with engine.begin() as connection:
         if outcome.response is not None:
@@ -559,11 +564,11 @@ def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionC
                        (extraction_run_id,tenant_id,project_id,source_id,source_version,passage_id,extraction_version,
                         model,sanitized_origin,credential_env,instructor_mode,selected_bundles,prompt_hash,schema_hash,
                         normalization,input_sha256,profile_name,profile_aliases,profile_source_sha256,profile_version,alias_catalog_version,
-                        usage,attempts,status,response)
+                        usage,attempts,status,response,raw_response)
                        VALUES (:run_id,:tenant,:project,:source_id,:source_version,:passage_id,:extraction_version,
                         :model,:origin,:credential,:mode,CAST(:bundles AS jsonb),:prompt_hash,:schema_hash,
                         'redaction-v1',:input_sha256,:profile_name,CAST(:profile_aliases AS jsonb),:profile_sha,:profile_version,:alias_catalog_version,
-                        CAST(:usage AS jsonb),:attempts,'succeeded',CAST(:response AS jsonb))"""
+                        CAST(:usage AS jsonb),:attempts,'succeeded',CAST(:response AS jsonb),CAST(:raw_response AS jsonb))"""
                 ),
                 params,
             )
@@ -585,11 +590,11 @@ def _persist_outcome(engine: Engine, scope: Scope, client: StructuredExtractionC
                        (extraction_run_id,tenant_id,project_id,source_id,source_version,passage_id,extraction_version,
                         model,sanitized_origin,credential_env,instructor_mode,selected_bundles,prompt_hash,schema_hash,
                         normalization,input_sha256,profile_name,profile_aliases,profile_source_sha256,profile_version,alias_catalog_version,
-                        usage,attempts,status,error_detail)
+                        usage,attempts,status,error_detail,raw_response)
                        VALUES (:run_id,:tenant,:project,:source_id,:source_version,:passage_id,:extraction_version,
                         :model,:origin,:credential,:mode,CAST(:bundles AS jsonb),:prompt_hash,:schema_hash,
                         'redaction-v1',:input_sha256,:profile_name,CAST(:profile_aliases AS jsonb),:profile_sha,:profile_version,:alias_catalog_version,
-                        CAST(:usage AS jsonb),:attempts,'failed','extraction validation failed')"""
+                        CAST(:usage AS jsonb),:attempts,'failed',:error_detail,CAST(:raw_response AS jsonb))"""
                 ),
                 params,
             )
