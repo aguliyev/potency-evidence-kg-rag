@@ -1,4 +1,5 @@
 {
+  "$schema": "https://app.kilo.ai/config.json",
   "plugin": [
     "file:///home/anar/git/aguliyev/deffai-potency-kg-rag-assignment/.kilo/plugins/graphify.js"
   ]
