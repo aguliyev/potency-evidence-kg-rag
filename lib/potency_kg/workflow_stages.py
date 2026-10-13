@@ -22,10 +22,12 @@ from .alias_discovery import (
 from .aliases import (
     AliasCatalogStatus,
     AliasDecision,
+    AliasEvidence,
     AliasRecord,
     AliasSeedReport,
     alias_catalog_status,
     decide_alias,
+    list_alias_evidence,
     list_aliases,
     load_alias_seeds,
 )
@@ -184,6 +186,24 @@ def inspect_aliases_stage(
     return _guarded_stage(config, inspect)  # type: ignore[return-value]
 
 
+def inspect_alias_evidence_stage(
+    config: Path,
+    *,
+    alias_id: str | None = None,
+    source_type: str | None = None,
+    entity_type: str | None = None,
+    canonical_key: str | None = None,
+) -> tuple[AliasEvidence, ...]:
+    """Protected, read-only evidence inspection for a scoped alias review."""
+    def inspect(_descriptor: Path, scope: Scope, engine: Engine) -> tuple[AliasEvidence, ...]:
+        with engine.connect() as connection:
+            return tuple(list_alias_evidence(
+                connection, scope, alias_id=alias_id, source_type=source_type, entity_type=entity_type,
+                canonical_key=canonical_key,
+            ))
+    return _guarded_stage(config, inspect)  # type: ignore[return-value]
+
+
 def review_alias_stage(config: Path, decision: AliasDecision) -> AliasRecord:
     return _guarded_stage(config, lambda _descriptor, scope, engine: decide_alias(engine, scope, decision))  # type: ignore[return-value]
 
@@ -238,8 +258,91 @@ def export_stage(config: Path, output_root: Path) -> object:
     return _guarded_stage(config, export)
 
 
-def inspect_stage(config: Path) -> object:
-    return alias_status_stage(config)
+def _active_export_state(output_root: Path | None, scope: Scope) -> tuple[str, str | None]:
+    if output_root is None:
+        return "not_checked", None
+    root = guard_output_path(output_root, package_root=_package_root())
+    manifest_path = root / "current" / "manifest.json"
+    if not manifest_path.is_file():
+        return "not_run", None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_scope = manifest["scope"]
+        graph_version = manifest["graph_version"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return "invalid", None
+    if manifest_scope != {"tenant_id": scope.tenant_id, "project_id": scope.project_id}:
+        return "invalid", None
+    if not isinstance(graph_version, str) or not graph_version:
+        return "invalid", None
+    return "active", graph_version
+
+
+def inspect_stage(config: Path, *, output_root: Path | None = None) -> object:
+    """Read-only scoped operational summary safe to show after each workflow write."""
+    def inspect(_descriptor: Path, scope: Scope, engine: Engine) -> dict[str, object]:
+        with engine.connect() as connection:
+            export_status, export_version = _active_export_state(output_root, scope)
+            counts = {
+                name: int(connection.execute(text(
+                    f"SELECT count(*) FROM {table} WHERE tenant_id=:tenant AND project_id=:project"
+                ), {"tenant": scope.tenant_id, "project": scope.project_id}).scalar_one())
+                for name, table in {
+                    "documents": "source_document", "passages": "source_passage",
+                    "aliases": "aliases", "alias_evidence": "alias_evidence",
+                    "alias_discovery_runs": "alias_discovery_run", "embedding_runs": "embedding_run",
+                    "indexes": "index_snapshot",
+                    "jev_runs": "jev_response", "extraction_runs": "llm_extraction_run",
+                    "materializations": "materialization_run", "graph_refreshes": "graph_refresh_run",
+                }.items()
+            }
+            counts["exports"] = int(export_status == "active")
+            status_tables = {
+                "alias_discovery": "alias_discovery_run", "embedding": "embedding_run",
+                "jev": "jev_response", "extraction": "llm_extraction_run",
+                "materialization": "materialization_run", "graph_refresh": "graph_refresh_run",
+            }
+            statuses = {
+                "aliases": dict(connection.execute(text(
+                    "SELECT status,count(*) FROM aliases WHERE tenant_id=:tenant AND project_id=:project GROUP BY status"
+                ), {"tenant": scope.tenant_id, "project": scope.project_id}).all()),
+                "processing": dict(connection.execute(text(
+                    "SELECT state,count(*) FROM passage_processing WHERE tenant_id=:tenant AND project_id=:project GROUP BY state"
+                ), {"tenant": scope.tenant_id, "project": scope.project_id}).all()),
+                **{
+                    name: dict(connection.execute(text(
+                        f"SELECT status,count(*) FROM {table} WHERE tenant_id=:tenant AND project_id=:project GROUP BY status"
+                    ), {"tenant": scope.tenant_id, "project": scope.project_id}).all())
+                    for name, table in status_tables.items()
+                },
+                "export": {export_status: 1},
+            }
+            failures = {
+                name: int(connection.execute(text(
+                    f"SELECT count(*) FROM {table} WHERE tenant_id=:tenant AND project_id=:project AND status='failed'"
+                ), {"tenant": scope.tenant_id, "project": scope.project_id}).scalar_one())
+                for name, table in status_tables.items()
+            }
+            failures["export"] = int(export_status == "invalid")
+            active_index = connection.execute(text(
+                "SELECT index_version,embedding_version FROM current_index WHERE tenant_id=:tenant AND project_id=:project"
+            ), {"tenant": scope.tenant_id, "project": scope.project_id}).mappings().one_or_none()
+            active_graph = connection.execute(text(
+                "SELECT graph_version,index_version,embedding_version FROM graph_scope WHERE tenant_id=:tenant AND project_id=:project"
+            ), {"tenant": scope.tenant_id, "project": scope.project_id}).mappings().one_or_none()
+            versions = {
+                "active_index": active_index["index_version"] if active_index else None,
+                "active_embedding": active_index["embedding_version"] if active_index else None,
+                "active_graph": active_graph["graph_version"] if active_graph else None,
+                "graph_index": active_graph["index_version"] if active_graph else None,
+                "graph_embedding": active_graph["embedding_version"] if active_graph else None,
+                "active_export": export_version,
+            }
+            return {
+                "scope": scope, "catalog": alias_catalog_status(connection, scope), "counts": counts,
+                "statuses": statuses, "sanitized_failures": failures, "versions": versions,
+            }
+    return _guarded_stage(config, inspect)
 
 
 def run_kg_workflow(config: Path, output_root: Path, *, env: Mapping[str, str] | None = None) -> dict[str, object]:
@@ -254,6 +357,10 @@ def run_kg_workflow(config: Path, output_root: Path, *, env: Mapping[str, str] |
     )
     readiness = _semantic_workflow_ready(environment)
     semantic: dict[str, object] | None = None
+    stages = [
+        "preflight", "import", "load-alias-seeds", "discover-aliases-deterministic",
+        "discover-aliases-llm",
+    ]
     if readiness:
         semantic = {
             "embedding": embed_stage(config, env=environment),
@@ -263,15 +370,19 @@ def run_kg_workflow(config: Path, output_root: Path, *, env: Mapping[str, str] |
         }
         graph = refresh_graph_stage(config, mode="semantic")
         mode = "semantic"
+        stages.extend(["embed", "classify-jev", "extract", "materialize", "refresh-graph"])
     else:
         graph = refresh_graph_stage(config, mode="structural")
         mode = "structural"
+        stages.append("refresh-graph")
     exported = export_stage(config, output_root)
+    inspection = inspect_stage(config, output_root=output_root)
+    stages.extend(["export-kg", "inspect"])
     return {
         "status": "succeeded" if mode == "semantic" else "completed_structural",
         "mode": mode,
         "semantic_status": "succeeded" if mode == "semantic" else "not_run",
-        "stages": ["preflight", "import", "load-alias-seeds", "discover-aliases-deterministic", "refresh-graph", "export-kg"],
+        "stages": stages,
         "preflight": preflight,
         "import": imported,
         "alias_seeds": seeds,
@@ -280,4 +391,5 @@ def run_kg_workflow(config: Path, output_root: Path, *, env: Mapping[str, str] |
         "semantic": semantic,
         "graph": graph,
         "export": exported,
+        "inspection": inspection,
     }

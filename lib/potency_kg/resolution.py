@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
 from .alias_discovery import AliasProposal, record_alias_proposal
-from .aliases import AliasCatalog, approved_alias_catalog, normalize_alias
+from .aliases import AliasCatalog, approved_alias_catalog, lock_alias_catalog, normalize_alias
 from .contracts import Scope, ScopedPassageIdentity
 from .extraction import build_response_model
 from .ids import canonical_json, derive_extraction_version, derive_scoped_id
@@ -436,6 +436,7 @@ def materialize_extraction(
     counts = {"mentions": 0, "alias_proposals": 0, "assertions": 0, "evidence_edges": 0}
     try:
         with engine.begin() as connection:
+            lock_alias_catalog(connection, passage.scope)
             params = {**_params(passage), "extraction_run_id": extraction_run_id}
             identity_matches = connection.execute(
                 text("""SELECT 1 FROM llm_extraction_run

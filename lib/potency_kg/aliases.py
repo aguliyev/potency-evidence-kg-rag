@@ -90,6 +90,7 @@ class AliasCatalogStatus:
     latest_jev_catalog_versions: Sequence[str]
     latest_extraction_catalog_versions: Sequence[str]
     semantic_stale: bool
+    semantic_incomplete: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "latest_jev_catalog_versions", tuple(self.latest_jev_catalog_versions))
@@ -103,6 +104,27 @@ class _SeedAlias:
     entity_type: EntityType
     canonical_key: str
     canonical_name: str
+
+
+@dataclass(frozen=True)
+class AliasEvidence:
+    """Immutable, scoped review evidence joined to its proposed canonical target."""
+
+    evidence_id: str
+    alias_id: str
+    source_type: str
+    source_id: str | None
+    source_version: str | None
+    passage_id: str | None
+    exact_quote: str | None
+    original_start: int | None
+    original_end: int | None
+    detector_name: str
+    detector_version: str
+    input_sha256: str
+    entity_type: EntityType | None
+    canonical_key: str | None
+    canonical_name: str | None
 
 
 def normalize_alias(value: str) -> str:
@@ -199,11 +221,23 @@ def _row_record(row: object) -> AliasRecord:
     )
 
 
+def _catalog_lock_key(scope: Scope) -> int:
+    """Stable signed bigint for the transaction-wide scoped catalog lock."""
+    digest = sha256(canonical_json({"scope": scope.as_tuple()}).encode()).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
+def lock_alias_catalog(connection: Connection, scope: Scope) -> None:
+    """Serialize catalog mutations with consumers that resolve the same scope."""
+    connection.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": _catalog_lock_key(scope)})
+
+
 def load_alias_seeds(engine: Engine, scope: Scope, seed_path: Path = DEFAULT_ALIAS_SEED_PATH) -> AliasSeedReport:
     """Reconcile authoritative static aliases after validating the complete JSON document."""
     desired = _load_seed_document(seed_path, scope)
     inserted = unchanged = retired = replaced = evidence_inserted = 0
     with engine.begin() as connection:
+        lock_alias_catalog(connection, scope)
         existing = [dict(row) for row in connection.execute(text(
             """SELECT alias_id,alias_value,normalized_alias,entity_type,canonical_key,canonical_name,
                       status,normalization_version
@@ -211,36 +245,41 @@ def load_alias_seeds(engine: Engine, scope: Scope, seed_path: Path = DEFAULT_ALI
                 WHERE tenant_id=:tenant_id AND project_id=:project_id AND managed_by='static_config'
                 FOR UPDATE"""
         ), {"tenant_id": scope.tenant_id, "project_id": scope.project_id}).mappings()]
-        active = {
-            (cast(str, row["normalized_alias"]), cast(EntityType, row["entity_type"])): row
-            for row in existing
-            if row["status"] == "approved"
-        }
+        existing_by_id = {cast(str, row["alias_id"]): row for row in existing}
+        desired_by_id = {_alias_id(scope, item): item for item in desired}
 
         for item in desired:
-            current = active.pop((item.normalized_alias, item.entity_type), None)
+            alias_id = _alias_id(scope, item)
+            conflict = next((row for row in existing if (
+                row["status"] == "approved"
+                and row["alias_id"] != alias_id
+                and row["normalized_alias"] == item.normalized_alias
+                and row["entity_type"] == item.entity_type
+            )), None)
+            if conflict is not None:
+                connection.execute(text(
+                    """UPDATE aliases SET status='rejected',decided_at=now(),decided_by='static_config',
+                       decision_note='removed or replaced by authoritative static configuration',updated_at=now()
+                       WHERE tenant_id=:tenant_id AND project_id=:project_id AND alias_id=:alias_id"""
+                ), {"tenant_id": scope.tenant_id, "project_id": scope.project_id, "alias_id": conflict["alias_id"]})
+                conflict["status"] = "rejected"
+                retired += 1
+                replaced += 1
+            current = existing_by_id.get(alias_id)
             equivalent = current is not None and (
                 current["entity_type"], current["canonical_key"],
                 current["canonical_name"], current["normalization_version"],
             ) == (item.entity_type, item.canonical_key, item.canonical_name, ALIAS_NORMALIZATION_VERSION)
             if equivalent:
-                if current["alias_value"] != item.alias_value:
+                if current["status"] != "approved" or current["alias_value"] != item.alias_value:
                     connection.execute(text(
-                        """UPDATE aliases SET alias_value=:alias_value,updated_at=now()
+                        """UPDATE aliases SET alias_value=:alias_value,status='approved',decided_at=NULL,
+                           decided_by=NULL,decision_note=NULL,updated_at=now()
                            WHERE tenant_id=:tenant_id AND project_id=:project_id AND alias_id=:alias_id"""
                     ), {"tenant_id": scope.tenant_id, "project_id": scope.project_id,
                         "alias_id": current["alias_id"], "alias_value": item.alias_value})
                 unchanged += 1
                 continue
-            if current is not None:
-                connection.execute(text(
-                    """UPDATE aliases SET status='rejected',decided_at=now(),decided_by='static_config',
-                       decision_note='removed or replaced by authoritative static configuration',updated_at=now()
-                       WHERE tenant_id=:tenant_id AND project_id=:project_id AND alias_id=:alias_id"""
-                ), {"tenant_id": scope.tenant_id, "project_id": scope.project_id, "alias_id": current["alias_id"]})
-                retired += 1
-                replaced += 1
-            alias_id = _alias_id(scope, item)
             connection.execute(text(
                 """INSERT INTO aliases
                    (tenant_id,project_id,alias_id,alias_value,normalized_alias,entity_type,canonical_key,canonical_name,
@@ -267,13 +306,22 @@ def load_alias_seeds(engine: Engine, scope: Scope, seed_path: Path = DEFAULT_ALI
             inserted += 1
             evidence_inserted += int(evidence.rowcount == 1)
 
-        for current in active.values():
+        for current in existing:
+            if current["status"] != "approved" or current["alias_id"] in desired_by_id:
+                continue
+            replacement = any(
+                item.normalized_alias == current["normalized_alias"] and item.entity_type == current["entity_type"]
+                for item in desired
+            )
             connection.execute(text(
                 """UPDATE aliases SET status='rejected',decided_at=now(),decided_by='static_config',
-                   decision_note='removed from authoritative static configuration',updated_at=now()
+                   decision_note=:note,updated_at=now()
                    WHERE tenant_id=:tenant_id AND project_id=:project_id AND alias_id=:alias_id"""
-            ), {"tenant_id": scope.tenant_id, "project_id": scope.project_id, "alias_id": current["alias_id"]})
+            ), {"tenant_id": scope.tenant_id, "project_id": scope.project_id, "alias_id": current["alias_id"],
+                "note": "removed or replaced by authoritative static configuration" if replacement
+                else "removed from authoritative static configuration"})
             retired += 1
+            replaced += int(replacement)
         catalog = approved_alias_catalog(connection, scope)
     return AliasSeedReport(scope, inserted, unchanged, retired, replaced, evidence_inserted, catalog.version)
 
@@ -329,6 +377,51 @@ def list_aliases(
     return tuple(_row_record(dict(row)) for row in rows)
 
 
+def list_alias_evidence(
+    connection: Connection,
+    scope: Scope,
+    *,
+    alias_id: str | None = None,
+    source_type: str | None = None,
+    entity_type: str | None = None,
+    canonical_key: str | None = None,
+) -> Sequence[AliasEvidence]:
+    """List immutable evidence in one scope with review-safe source and target filters."""
+    allowed_sources = {"static_config", "deterministic_rule", "llm_mined", "extraction"}
+    if source_type is not None and source_type not in allowed_sources:
+        raise ValueError("unsupported evidence source type")
+    if entity_type is not None and entity_type not in ("Product", "Assay"):
+        raise ValueError("unsupported alias entity type")
+    if alias_id is not None and not alias_id.strip():
+        raise ValueError("alias_id filter must be nonempty")
+    clauses = ["evidence.tenant_id=:tenant_id", "evidence.project_id=:project_id"]
+    params: dict[str, object] = {"tenant_id": scope.tenant_id, "project_id": scope.project_id}
+    if alias_id is not None:
+        clauses.append("evidence.alias_id=:alias_id")
+        params["alias_id"] = alias_id
+    if source_type is not None:
+        clauses.append("evidence.source_type=:source_type")
+        params["source_type"] = source_type
+    if entity_type is not None:
+        clauses.append("alias.entity_type=:entity_type")
+        params["entity_type"] = entity_type
+    if canonical_key is not None:
+        clauses.append("alias.canonical_key=:canonical_key")
+        params["canonical_key"] = canonical_key
+    rows = connection.execute(text(
+        """SELECT evidence.evidence_id,evidence.alias_id,evidence.source_type,evidence.source_id,
+                  evidence.source_version,evidence.passage_id,evidence.exact_quote,evidence.original_start,
+                  evidence.original_end,evidence.detector_name,evidence.detector_version,evidence.input_sha256,
+                  alias.entity_type,alias.canonical_key,alias.canonical_name
+             FROM alias_evidence AS evidence JOIN aliases AS alias
+               ON (alias.tenant_id,alias.project_id,alias.alias_id)=
+                  (evidence.tenant_id,evidence.project_id,evidence.alias_id)
+            WHERE """ + " AND ".join(clauses) +
+        " ORDER BY evidence.created_at,evidence.evidence_id"
+    ), params).mappings()
+    return tuple(AliasEvidence(**dict(row)) for row in rows)
+
+
 def decide_alias(engine: Engine, scope: Scope, decision: AliasDecision) -> AliasRecord:
     """Apply one explicit review decision, or return an identical prior decision without a write."""
     if decision.status not in ("approved", "rejected"):
@@ -336,6 +429,7 @@ def decide_alias(engine: Engine, scope: Scope, decision: AliasDecision) -> Alias
     if not decision.alias_id.strip() or not decision.decided_by.strip():
         raise ValueError("alias_id and decided_by are required")
     with engine.begin() as connection:
+        lock_alias_catalog(connection, scope)
         row = connection.execute(text(
             """SELECT alias_id,alias_value,normalized_alias,entity_type,canonical_key,canonical_name,status,managed_by,
                       confidence,decided_by,decision_note
@@ -363,9 +457,13 @@ def decide_alias(engine: Engine, scope: Scope, decision: AliasDecision) -> Alias
             values["status"], values["entity_type"], values["canonical_key"], values["canonical_name"],
             values["decided_by"], values["decision_note"],
         )
-        if values["status"] != "pending":
-            if current == desired:
-                return _row_record(values)
+        if current == desired:
+            return _row_record(values)
+        permitted_reconsideration = (
+            (values["status"] in ("pending", "rejected") and decision.status == "approved")
+            or (values["status"] in ("pending", "approved") and decision.status == "rejected")
+        )
+        if not permitted_reconsideration:
             raise ValueError("a contradictory decision already exists for this alias")
         connection.execute(text(
             """UPDATE aliases SET entity_type=:entity_type,canonical_key=:canonical_key,canonical_name=:canonical_name,
@@ -389,28 +487,55 @@ _SEMANTIC_HISTORY_TABLES = {
 }
 
 
-def _latest_catalog_versions(connection: Connection, history_kind: Literal["jev", "extraction"], scope: Scope) -> tuple[str, ...]:
-    table = _SEMANTIC_HISTORY_TABLES[history_kind]
-    result = connection.execute(text(
-        f"""WITH latest AS (
-              SELECT max(created_at) AS created_at FROM {table}
-               WHERE tenant_id=:tenant_id AND project_id=:project_id AND status='succeeded'
-            )
-            SELECT DISTINCT alias_catalog_version FROM {table}, latest
-             WHERE {table}.tenant_id=:tenant_id AND {table}.project_id=:project_id
-               AND {table}.status='succeeded' AND {table}.created_at=latest.created_at
-             ORDER BY alias_catalog_version"""
-    ), {"tenant_id": scope.tenant_id, "project_id": scope.project_id})
-    return tuple(cast(str, value) for value in result.scalars())
+def _active_catalog_state(
+    connection: Connection, history_kind: Literal["jev", "extraction"], scope: Scope
+) -> tuple[tuple[str, ...], bool]:
+    """Read only the run selected by each active passage pointer, never a timestamp cohort."""
+    if history_kind == "jev":
+        query = """SELECT response.alias_catalog_version
+                     FROM passage_processing AS processing
+                     JOIN source_head AS head
+                       ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
+                          (processing.tenant_id,processing.project_id,processing.source_id,processing.source_version)
+                     LEFT JOIN jev_selection AS selection
+                       ON (selection.tenant_id,selection.project_id,selection.selection_id)=
+                          (processing.tenant_id,processing.project_id,processing.active_jev_selection_id)
+                     LEFT JOIN jev_response AS response
+                       ON (response.tenant_id,response.project_id,response.response_id,
+                           response.source_id,response.source_version,response.passage_id)=
+                          (selection.tenant_id,selection.project_id,selection.response_id,
+                           selection.source_id,selection.source_version,selection.passage_id)
+                    WHERE processing.tenant_id=:tenant_id AND processing.project_id=:project_id
+                      AND processing.state IN ('selected','extracted')"""
+    else:
+        query = """SELECT extraction.alias_catalog_version
+                     FROM passage_processing AS processing
+                     JOIN source_head AS head
+                       ON (head.tenant_id,head.project_id,head.source_id,head.source_version)=
+                          (processing.tenant_id,processing.project_id,processing.source_id,processing.source_version)
+                     LEFT JOIN llm_extraction_run AS extraction
+                       ON (extraction.tenant_id,extraction.project_id,extraction.extraction_run_id,
+                           extraction.source_id,extraction.source_version,extraction.passage_id)=
+                          (processing.tenant_id,processing.project_id,processing.validated_extraction_run_id,
+                           processing.source_id,processing.source_version,processing.passage_id)
+                    WHERE processing.tenant_id=:tenant_id AND processing.project_id=:project_id
+                      AND processing.validated_extraction_run_id IS NOT NULL"""
+    values = tuple(connection.execute(text(query), {
+        "tenant_id": scope.tenant_id, "project_id": scope.project_id,
+    }).scalars())
+    incomplete = any(value is None for value in values)
+    return tuple(sorted({cast(str, value) for value in values if value is not None})), incomplete
 
 
 def alias_catalog_status(connection: Connection, scope: Scope) -> AliasCatalogStatus:
     """Report whether the most recent Jev/extraction state uses this exact catalog."""
     catalog = approved_alias_catalog(connection, scope)
-    jev_versions = _latest_catalog_versions(connection, "jev", scope)
-    extraction_versions = _latest_catalog_versions(connection, "extraction", scope)
+    jev_versions, jev_incomplete = _active_catalog_state(connection, "jev", scope)
+    extraction_versions, extraction_incomplete = _active_catalog_state(connection, "extraction", scope)
     observed = (*jev_versions, *extraction_versions)
     return AliasCatalogStatus(
         scope, catalog.version, jev_versions, extraction_versions,
-        bool(observed) and any(version != catalog.version for version in observed),
+        (bool(observed) and any(version != catalog.version for version in observed))
+        or jev_incomplete or extraction_incomplete,
+        jev_incomplete or extraction_incomplete,
     )

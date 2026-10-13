@@ -79,11 +79,20 @@ queue and evidence before deciding:
 ```bash
 bin/runner python -m potency_kg.cli list-aliases \
   --config configs/casgevy-potency.json --status pending
+bin/runner python -m potency_kg.cli list-alias-evidence \
+  --config configs/casgevy-potency.json --alias-id <alias-id>
 ```
 
 Use the scoped immutable `alias_evidence` records associated with the selected alias
 ID to inspect its exact quote, passage, detector, input hash, and source/provenance
 before making a decision.
+
+`list-alias-evidence` is the read-only review boundary. Use `--alias-id` for the
+pending row selected from the queue; this works before a canonical target exists.
+Its optional source-type, entity-type, and canonical-key filters can narrow that
+record further. All filters remain scoped to the descriptor's tenant and project;
+the command never returns provider credentials, raw provider responses, or error
+details.
 
 Apply these criteria:
 

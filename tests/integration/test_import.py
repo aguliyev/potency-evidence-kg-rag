@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from hashlib import sha256
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -93,6 +94,24 @@ def _synthetic_descriptor(
     path = configs / "project.json"
     path.write_text(json.dumps(descriptor), encoding="utf-8")
     return path
+
+
+def _attach_validated_extraction(connection, source_version: str) -> None:
+    run_id = uuid4()
+    values = {"run": run_id, "version": source_version}
+    connection.execute(text(
+        """INSERT INTO llm_extraction_run
+           (extraction_run_id,tenant_id,project_id,source_id,source_version,passage_id,extraction_version,model,
+            sanitized_origin,credential_env,selected_bundles,input_sha256,profile_version,alias_catalog_version,status)
+           VALUES (:run,'test-tenant','import-behavior','synthetic-source',:version,'synthetic-source:p0001',
+            'extract','model','https://example.test/v1','LLM_API_KEY','[]','input','profile','catalog','succeeded')"""
+    ), values)
+    connection.execute(text(
+        """UPDATE passage_processing SET state='selected',reason='extraction_validated',
+             validated_extraction_run_id=:run
+           WHERE tenant_id='test-tenant' AND project_id='import-behavior'
+             AND source_id='synthetic-source' AND source_version=:version"""
+    ), values)
 
 
 def test_official_preflight_reconciles_manifest_records_and_raw_files() -> None:
@@ -186,9 +205,15 @@ def test_head_replacement_requires_explicit_descriptor_metadata(db_engine, tmp_p
     v2 = _synthetic_descriptor(tmp_path / "v2", source_version="v2")
     v3 = _synthetic_descriptor(tmp_path / "v3", source_version="v3", replacement_from="v1")
     import_source_version(db_engine, ImportRequest(v1))
+    with db_engine.begin() as connection:
+        _attach_validated_extraction(connection, "v1")
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT source_version FROM source_head")).scalar_one() == "v1"
-        assert connection.execute(text("SELECT reason FROM passage_processing WHERE source_version='v1'")).scalar_one() == "eligible_for_processing"
+        prepared = connection.execute(text(
+            "SELECT reason,validated_extraction_run_id FROM passage_processing WHERE source_version='v1'"
+        )).one()
+        assert prepared.reason == "extraction_validated"
+        assert prepared.validated_extraction_run_id is not None
     import_source_version(db_engine, ImportRequest(v2))
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT source_version FROM source_head")).scalar_one() == "v1"
@@ -198,6 +223,9 @@ def test_head_replacement_requires_explicit_descriptor_metadata(db_engine, tmp_p
         assert connection.execute(text("SELECT source_version FROM source_head")).scalar_one() == "v3"
         reasons = {row.source_version: row.reason for row in connection.execute(text("SELECT source_version, reason FROM passage_processing"))}
         assert reasons == {"v1": "inactive_source_version", "v2": "inactive_source_version", "v3": "eligible_for_processing"}
+        assert connection.execute(text(
+            "SELECT validated_extraction_run_id FROM passage_processing WHERE source_version='v1'"
+        )).scalar_one() is None
         scope = Scope("test-tenant", "import-behavior")
         projection = load_current_projection(connection, scope, "structural", allow_partial=False)
         assert {node["node_id"] for node in projection.nodes} == {
@@ -221,6 +249,9 @@ def test_explicit_replacement_can_activate_an_already_imported_version(db_engine
 
     import_source_version(db_engine, ImportRequest(v1))
     import_source_version(db_engine, ImportRequest(v2_without_replacement))
+    with db_engine.begin() as connection:
+        _attach_validated_extraction(connection, "v1")
+        _attach_validated_extraction(connection, "v2")
     report = import_source_version(db_engine, ImportRequest(v2_with_replacement))
 
     with db_engine.connect() as connection:
@@ -231,7 +262,11 @@ def test_explicit_replacement_can_activate_an_already_imported_version(db_engine
                 text("SELECT source_version, reason FROM passage_processing ORDER BY source_version")
             )
         }
+        validated = dict(connection.execute(text(
+            "SELECT source_version,validated_extraction_run_id FROM passage_processing ORDER BY source_version"
+        )).all())
     assert reasons == {"v1": "inactive_source_version", "v2": "eligible_for_processing"}
+    assert validated == {"v1": None, "v2": None}
     assert (report.new_source_versions, report.unchanged_source_versions, report.imported_passages) == (0, 1, 0)
 
 

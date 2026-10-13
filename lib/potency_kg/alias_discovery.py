@@ -226,21 +226,28 @@ def record_alias_proposal(
         "canonical_name": proposal.canonical_name,
     }
     lookup_params = {"tenant_id": scope.tenant_id, "project_id": scope.project_id, "normalized": normalized, **target}
-    if all(value is None for value in target.values()):
+    candidate_alias_id = _proposal_alias_id(scope, proposal)
+    existing = connection.execute(text(
+        """SELECT alias_id FROM aliases
+             WHERE tenant_id=:tenant_id AND project_id=:project_id AND alias_id=:alias_id
+             FOR UPDATE"""
+    ), {"tenant_id": scope.tenant_id, "project_id": scope.project_id, "alias_id": candidate_alias_id}).scalar_one_or_none()
+    if existing is None and all(value is None for value in target.values()):
         lookup = """SELECT alias_id FROM aliases
                      WHERE tenant_id=:tenant_id AND project_id=:project_id AND normalized_alias=:normalized
                        AND entity_type IS NULL AND canonical_key IS NULL AND canonical_name IS NULL
                      ORDER BY alias_id LIMIT 1 FOR UPDATE"""
-    else:
+    elif existing is None:
         lookup = """SELECT alias_id FROM aliases
                      WHERE tenant_id=:tenant_id AND project_id=:project_id AND normalized_alias=:normalized
                        AND entity_type IS NOT DISTINCT FROM :entity_type
                        AND canonical_key IS NOT DISTINCT FROM :canonical_key
                        AND canonical_name IS NOT DISTINCT FROM :canonical_name
                      ORDER BY alias_id LIMIT 1 FOR UPDATE"""
-    existing = connection.execute(text(lookup), lookup_params).scalar_one_or_none()
+    if existing is None:
+        existing = connection.execute(text(lookup), lookup_params).scalar_one_or_none()
     alias_inserted = existing is None
-    alias_id = str(existing) if existing is not None else _proposal_alias_id(scope, proposal)
+    alias_id = str(existing) if existing is not None else candidate_alias_id
     if alias_inserted:
         connection.execute(text(
             """INSERT INTO aliases

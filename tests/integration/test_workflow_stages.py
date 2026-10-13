@@ -7,6 +7,7 @@ import pytest
 
 import potency_kg.cli as cli
 import potency_kg.workflow_stages as stages
+from potency_kg.contracts import Scope
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
@@ -107,6 +108,7 @@ def test_composite_stays_structural_when_real_model_settings_are_incomplete(
     monkeypatch.setattr(stages, "embed_stage", lambda *_args, **_kwargs: pytest.fail("embedding started"))
     monkeypatch.setattr(stages, "refresh_graph_stage", lambda _config, *, mode: events.append(mode) or {})
     monkeypatch.setattr(stages, "export_stage", lambda *_args: {})
+    monkeypatch.setattr(stages, "inspect_stage", lambda _config, **_kwargs: {})
 
     report = stages.run_kg_workflow(config, tmp_path / "results", env={stages.MODEL_GATE: "true"})
 
@@ -185,6 +187,60 @@ def test_cli_materialize_uses_the_public_protected_stage_owner(
     assert cli._execute(args, {}) == expected
 
 
+def test_cli_alias_evidence_uses_the_read_only_scoped_stage_owner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Evidence inspection must use the same protected scope boundary as alias review."""
+    config = _descriptor(tmp_path)
+    parser = cli.build_parser()
+    args = parser.parse_args([
+        "list-alias-evidence", "--config", str(config), "--source-type", "deterministic_rule",
+        "--entity-type", "Product", "--canonical-key", "casgevy", "--alias-id", "alias-1",
+    ])
+    expected = {"immutable": True}
+    monkeypatch.setattr(
+        cli, "inspect_alias_evidence_stage",
+        lambda actual, **filters: expected if actual == config and filters == {
+            "source_type": "deterministic_rule", "entity_type": "Product", "canonical_key": "casgevy",
+            "alias_id": "alias-1",
+        } else None,
+    )
+
+    assert cli._execute(args, {}) == expected
+
+
+def test_scoped_inspection_reports_all_stage_counts_statuses_failures_and_versions(
+    db_engine, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A post-write inspection must expose every independently rerunnable stage's observable state."""
+    scope = Scope("inspection-tenant", "inspection-project")
+    monkeypatch.setattr(
+        stages, "_guarded_stage",
+        lambda config, operation: operation(config, scope, db_engine),
+    )
+
+    report = stages.inspect_stage(tmp_path / "config.json", output_root=tmp_path / "results")
+
+    assert set(report["counts"]) == {
+        "documents", "passages", "aliases", "alias_evidence", "alias_discovery_runs",
+        "embedding_runs", "indexes", "jev_runs", "extraction_runs", "materializations",
+        "graph_refreshes", "exports",
+    }
+    assert set(report["statuses"]) == {
+        "aliases", "processing", "alias_discovery", "embedding", "jev", "extraction",
+        "materialization", "graph_refresh",
+        "export",
+    }
+    assert set(report["sanitized_failures"]) == {
+        "alias_discovery", "embedding", "jev", "extraction", "materialization", "graph_refresh",
+        "export",
+    }
+    assert report["versions"] == {
+        "active_index": None, "active_embedding": None, "active_graph": None,
+        "graph_index": None, "graph_embedding": None, "active_export": None,
+    }
+
+
 def test_build_notebook_has_ordered_independent_stage_and_inspection_cells() -> None:
     """The operator notebook must expose stages rather than hide them in one composite call."""
     notebook = json.loads(
@@ -211,11 +267,11 @@ def test_build_notebook_has_ordered_independent_stage_and_inspection_cells() -> 
     )
     call_positions: list[int] = []
     for stage_name in stages_in_order:
-        position = next(
-            index
-            for index, (kind, source) in enumerate(cells)
+        positions = [
+            index for index, (kind, source) in enumerate(cells)
             if kind == "code" and f"{stage_name}_stage(" in source
-        )
+        ]
+        position = positions[-1] if stage_name == "inspect" else positions[0]
         call_positions.append(position)
     assert call_positions == sorted(call_positions)
 
@@ -235,6 +291,8 @@ def test_build_notebook_has_ordered_independent_stage_and_inspection_cells() -> 
     build_code = "\n".join(source for kind, source in cells if kind == "code")
     assert "DEFAULT_ENABLE_LLM_ALIAS_DISCOVERY" in build_code
     assert "enabled=enable_llm_alias_discovery" in build_code
+    assert "alias_id=" in build_code
+    assert "output_root=output_root" in build_code
     assert "def " not in build_code and "class " not in build_code
     assert "API_KEY" not in build_code and "Authorization" not in build_code
     assert all(not cell.get("outputs") for cell in notebook["cells"] if cell["cell_type"] == "code")

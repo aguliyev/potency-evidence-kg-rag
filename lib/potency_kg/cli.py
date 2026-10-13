@@ -52,7 +52,6 @@ from .settings import (
     load_jev_settings,
 )
 from .workflow_stages import (
-    alias_status_stage,
     classify_jev_stage,
     discover_aliases_deterministic_stage,
     discover_aliases_llm_stage,
@@ -61,6 +60,7 @@ from .workflow_stages import (
     extract_stage,
     import_stage,
     inspect_aliases_stage,
+    inspect_alias_evidence_stage,
     load_alias_seeds_stage,
     materialize_stage,
     preflight_stage,
@@ -799,12 +799,19 @@ def build_parser() -> argparse.ArgumentParser:
         "discover-aliases-deterministic",
         "discover-aliases-llm",
         "list-aliases",
+        "list-alias-evidence",
     ):
         _add_config(subparsers.add_parser(name))
 
     aliases = subparsers.choices["list-aliases"]
     aliases.add_argument("--status", choices=("pending", "approved", "rejected"))
     aliases.add_argument("--entity-type", choices=("Product", "Assay"))
+
+    evidence = subparsers.choices["list-alias-evidence"]
+    evidence.add_argument("--alias-id")
+    evidence.add_argument("--source-type", choices=("static_config", "deterministic_rule", "llm_mined", "extraction"))
+    evidence.add_argument("--entity-type", choices=("Product", "Assay"))
+    evidence.add_argument("--canonical-key")
 
     review = subparsers.add_parser("review-alias")
     _add_config(review)
@@ -867,6 +874,11 @@ def _execute(args: argparse.Namespace, env: Mapping[str, str]) -> object:
         return discover_aliases_llm_stage(args.config, enabled=True, env=env)
     if command == "list-aliases":
         return inspect_aliases_stage(args.config, status=getattr(args, "status", None), entity_type=getattr(args, "entity_type", None))
+    if command == "list-alias-evidence":
+        return inspect_alias_evidence_stage(
+            args.config, alias_id=args.alias_id, source_type=args.source_type, entity_type=args.entity_type,
+            canonical_key=args.canonical_key,
+        )
     if command == "review-alias":
         if args.decision == "approved" and not all((args.entity_type, args.canonical_key, args.canonical_name)):
             raise ValueError("approval requires --entity-type, --canonical-key, and --canonical-name")

@@ -248,6 +248,26 @@ def test_discovery_attaches_new_evidence_without_reopening_a_rejected_alias(db_e
     assert evidence_versions == ["v1", "v2"]
 
 
+def test_rediscovery_after_approval_uses_the_immutable_unresolved_alias_id(db_engine, tmp_path: Path) -> None:
+    """Target enrichment by review must not make source replacement create a second alias row."""
+    v1 = _descriptor(tmp_path / "v1", {"source-a": "v1"})
+    import_source_version(db_engine, ImportRequest(v1))
+    discover_aliases_deterministic(db_engine, SCOPE)
+    with db_engine.connect() as connection:
+        alias_id = connection.execute(text("SELECT alias_id FROM aliases")).scalar_one()
+    decide_alias(db_engine, SCOPE, AliasDecision(alias_id, "approved", "reviewer", "Product", "casgevy", "CASGEVY"))
+
+    v2 = _descriptor(tmp_path / "v2", {"source-a": "v2"}, replacements={"source-a": "v1"})
+    import_source_version(db_engine, ImportRequest(v2))
+    discover_aliases_deterministic(db_engine, SCOPE)
+    with db_engine.connect() as connection:
+        rows = connection.execute(text("SELECT alias_id,status FROM aliases ORDER BY alias_id")).all()
+        evidence_ids = connection.execute(text("SELECT DISTINCT alias_id FROM alias_evidence ORDER BY alias_id")).scalars().all()
+
+    assert rows == [(alias_id, "approved")]
+    assert evidence_ids == [alias_id]
+
+
 def test_pending_proposals_with_conflicting_targets_remain_separate_review_items(db_engine, tmp_path: Path) -> None:
     """Collapsing distinct proposed targets would hide a conflict that a reviewer must resolve."""
     descriptor = _descriptor(tmp_path / "document", {"source-a": "v1"})

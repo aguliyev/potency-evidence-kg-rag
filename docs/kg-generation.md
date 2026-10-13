@@ -63,6 +63,12 @@ The inspection notebook has a second, independent
 `KG_ENABLE_RETRIEVAL_SMOKE=true` gate for its single query-embedding call and trace
 write.
 
+Each post-write notebook inspection is read-only and reports scoped counts and
+statuses for import, alias discovery, embeddings/indexes, Jev, extraction,
+materialization, graph refresh, and export. It also reports current catalog,
+embedding, index, graph, and validated export versions plus sanitized failure
+counts; it deliberately omits provider response bodies and error detail.
+
 Endpoints are rejected if they contain userinfo, query parameters, or fragments.
 Stored and printed reports contain sanitized origins and credential-variable names,
 not credential values, authorization headers, endpoint query strings, exception
@@ -80,6 +86,7 @@ bin/runner python -m potency_kg.cli import --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli load-alias-seeds --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli discover-aliases-deterministic --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli list-aliases --config configs/casgevy-potency.json
+bin/runner python -m potency_kg.cli list-alias-evidence --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli embed --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli classify-jev --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli extract --config configs/casgevy-potency.json
@@ -179,6 +186,9 @@ bin/runner python -m potency_kg.cli list-aliases \
 # Inspect the immutable evidence associated with that scoped alias in the
 # `alias_evidence` records before deciding. A review-managed proposal requires the
 # complete typed target to approve.
+bin/runner python -m potency_kg.cli list-alias-evidence \
+  --config configs/casgevy-potency.json --alias-id <alias-id>
+
 bin/runner python -m potency_kg.cli review-alias \
   --config configs/casgevy-potency.json --alias-id <alias-id> \
   --decision approved --reviewer <operator> --entity-type Product \

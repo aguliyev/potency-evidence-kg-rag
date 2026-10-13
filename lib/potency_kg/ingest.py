@@ -548,7 +548,8 @@ def import_source_version(engine: Engine, run: ImportRequest) -> ImportReport:
                         text("""
                             UPDATE passage_processing
                             SET state='not_run', reason='eligible_for_processing',
-                                active_jev_selection_id=NULL, active_extraction_run_id=NULL, updated_at=now()
+                                active_jev_selection_id=NULL, active_extraction_run_id=NULL,
+                                validated_extraction_run_id=NULL, updated_at=now()
                             WHERE tenant_id=:tenant AND project_id=:project AND source_id=:source_id
                               AND source_version=:source_version
                         """),
@@ -558,7 +559,8 @@ def import_source_version(engine: Engine, run: ImportRequest) -> ImportReport:
                     text("""
                         UPDATE passage_processing
                         SET state='not_run', reason='inactive_source_version',
-                            active_jev_selection_id=NULL, active_extraction_run_id=NULL, updated_at=now()
+                            active_jev_selection_id=NULL, active_extraction_run_id=NULL,
+                            validated_extraction_run_id=NULL, updated_at=now()
                         WHERE tenant_id=:tenant AND project_id=:project AND source_id=:source_id
                           AND source_version <> :source_version
                           AND reason <> 'incomplete_source_version'

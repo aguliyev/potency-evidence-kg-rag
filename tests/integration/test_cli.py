@@ -34,6 +34,7 @@ def test_parser_exposes_only_derived_version_commands() -> None:
         "discover-aliases-deterministic",
         "discover-aliases-llm",
         "list-aliases",
+        "list-alias-evidence",
         "review-alias",
     }
     with pytest.raises(SystemExit):
@@ -58,6 +59,7 @@ def test_structural_workflow_orders_stages_and_never_constructs_model_clients(
     monkeypatch.setattr(workflow_stages, "discover_aliases_llm_stage", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(workflow_stages, "refresh_graph_stage", lambda _path, *, mode: events.append(f"refresh:{mode}") or {"graph_version": "graph-" + "1" * 64})
     monkeypatch.setattr(workflow_stages, "export_stage", lambda *_args: events.append("export") or {"graph_version": "graph-" + "1" * 64})
+    monkeypatch.setattr(workflow_stages, "inspect_stage", lambda _path, **_kwargs: events.append("inspect") or {"counts": {}})
 
     report = workflow_stages.run_kg_workflow(config, tmp_path / "results", env={})
 
@@ -68,6 +70,7 @@ def test_structural_workflow_orders_stages_and_never_constructs_model_clients(
         "discover-aliases-deterministic",
         "refresh:structural",
         "export",
+        "inspect",
     ]
     assert report["mode"] == "structural"
     assert report["semantic_status"] == "not_run"
