@@ -13,6 +13,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .age_projection import GraphRefreshReport, refresh_graph
+from .alias_discovery import AliasDiscoveryReport, discover_aliases_deterministic
+from .aliases import AliasSeedReport, load_alias_seeds
 from .contracts import ScopedPassageIdentity
 from .embedding_client import EmbeddingClient
 from .embeddings import EmbeddingReport, embed_active_passages
@@ -45,6 +47,8 @@ class FixtureRunReport:
     configuration: FixtureRunConfiguration
     output_dir: Path
     imported: ImportReport
+    alias_seeds: AliasSeedReport
+    alias_discovery: AliasDiscoveryReport
     embeddings: EmbeddingReport
     jev: JevProcessingReport
     extraction: ExtractionReport
@@ -207,6 +211,10 @@ def run_kg_fixtures(
             output_dir.mkdir(parents=True, exist_ok=False)
             descriptor = _write_import_inputs(configuration, output_dir)
             imported = import_source_version(engine, ImportRequest(descriptor))
+            # Alias preparation is structural: it is scoped, credential-free, and
+            # deliberately precedes every semantic fixture stage.
+            alias_seeds = load_alias_seeds(engine, configuration.scope)
+            alias_discovery = discover_aliases_deterministic(engine, configuration.scope)
             embeddings = embed_active_passages(engine, configuration.scope, clients.embedding)
             jev = classify_active_passages(engine, configuration.scope, clients.jev, clients.jev_policy)
             extraction = extract_selected_passages(
@@ -224,7 +232,8 @@ def run_kg_fixtures(
             )
             exported = export_graph_version(engine, configuration.scope, output_dir / "kg", graph.graph_version)
             reports.append(FixtureRunReport(
-                configuration, output_dir, imported, embeddings, jev, extraction, graph, retrieval, exported
+                configuration, output_dir, imported, alias_seeds, alias_discovery,
+                embeddings, jev, extraction, graph, retrieval, exported
             ))
         reconnect_verified = _verify_reconnect(engine, tuple(reports), clients)
         return FixtureGraphReport(tuple(reports), before, reconnect_verified)

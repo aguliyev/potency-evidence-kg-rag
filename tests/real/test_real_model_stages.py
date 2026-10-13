@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, SecretStr
@@ -11,6 +12,7 @@ from potency_kg.jev_client import TypeSafeJevClient, fixed_noul_questions
 from potency_kg.llm_client import InstructorExtractionClient
 from potency_kg.processing_policy import BUNDLE_ORDER
 from potency_kg.settings import load_embedding_settings, load_generation_settings
+from potency_kg.workflow_stages import discover_aliases_llm_stage
 
 
 pytestmark = pytest.mark.real_models
@@ -90,3 +92,21 @@ def test_real_generation_adapter_returns_schema_valid_acknowledgement() -> None:
     assert client.identity.credential_env == "LLM_API_KEY"
     assert client.identity.sanitized_origin == settings.sanitized_origin
     assert 1 <= client.attempts_for_current_thread() <= client.identity.max_attempts
+
+
+def test_real_llm_alias_discovery_is_explicitly_gated_and_reports_provider_evidence() -> None:
+    """The optional discovery provider check is skipped as not_run unless the existing real-model gate is complete."""
+    _require_real_models()
+
+    config = Path(__file__).resolve().parents[2] / "configs" / "casgevy-potency.json"
+    report = discover_aliases_llm_stage(config, enabled=True, env=os.environ)
+
+    # An empty structural database must be reported as not_run.  Otherwise this
+    # real-provider test could pass despite making no provider request at all.
+    if report.documents == 0:
+        pytest.skip("not_run: no active source documents have been imported for LLM alias discovery")
+    assert report.method == "llm"
+    assert report.documents == report.succeeded + report.failed + report.reused
+    assert report.succeeded > 0
+    assert report.failed == 0
+    assert all(str(run_id) for run_id in report.discovery_run_ids)

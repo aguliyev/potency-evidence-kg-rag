@@ -70,10 +70,51 @@ For each row record:
 - Record observed omissions and unsupported additions without changing thresholds,
   prompts, aliases, or source data during this review.
 
-Trusted profile aliases and extracted alias candidates follow different paths.
-Extracted candidates remain pending with exact evidence provenance; this review does
-not approve them. The deferred correction path is: human approval, auditable alias
-redirect, identification of affected evidence, derived rematerialization, shadow AGE
-rebuild and validation, atomic activation, and a new immutable export/current
-promotion. Approval UI, redirects, and review-triggered rematerialization are not
-implemented in this stage.
+## Alias review
+
+The alias registry is reviewed independently from extraction quality. Every row is
+scoped to the tenant/project being reviewed and has immutable evidence. Inspect the
+queue and evidence before deciding:
+
+```bash
+bin/runner python -m potency_kg.cli list-aliases \
+  --config configs/casgevy-potency.json --status pending
+```
+
+Use the scoped immutable `alias_evidence` records associated with the selected alias
+ID to inspect its exact quote, passage, detector, input hash, and source/provenance
+before making a decision.
+
+Apply these criteria:
+
+- **Pending:** approve only when the exact grounded quote, source passage, and
+  proposed synonym support the mapping. The reviewer must provide/confirm all
+  required target fields: `entity_type` (`Product` or `Assay`), `canonical_key`, and
+  `canonical_name`, plus a reviewer identity. Reject when the evidence is not a
+  synonym, is out of scope, or cannot support a complete target; record a concise
+  decision note.
+- **Approved:** verify that the mapping is exact after normalization and that no
+  other approved mapping conflicts on the same scoped typed normalized alias.
+  Approved aliases can resolve later exact mentions, but they do not rewrite prior
+  extractions, materializations, graph nodes, or exports.
+- **Rejected:** retain the decision and all evidence. Later discovery may add
+  evidence but does not silently reopen, approve, or delete the row.
+
+Static configuration rows are source-controlled and application-owned. They are
+already approved when loaded, cannot be approved or rejected through the database
+review command, and retain static evidence when configuration reconciliation retires
+them. Review commands are for `review`-managed rows only.
+
+An alias decision changes the scoped approved-catalog version immediately. Treat
+that as invalidation, not as a rebuild: inspect the alias status, then explicitly
+rerun Jev, extraction, materialization, semantic graph refresh, and export. The
+new export is a later immutable version; existing history and `current` remain
+unchanged until the validated replacement is promoted.
+
+```bash
+bin/runner python -m potency_kg.cli review-alias \
+  --config configs/casgevy-potency.json --alias-id <alias-id> \
+  --decision approved --reviewer <operator> --entity-type Product \
+  --canonical-key casgevy --canonical-name CASGEVY
+bin/runner python -m potency_kg.cli inspect-kg --config configs/casgevy-potency.json
+```

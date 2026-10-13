@@ -77,6 +77,9 @@ controlled embedding, Jev, extraction, index, or graph version label.
 ```bash
 bin/runner python -m potency_kg.cli preflight --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli import --config configs/casgevy-potency.json
+bin/runner python -m potency_kg.cli load-alias-seeds --config configs/casgevy-potency.json
+bin/runner python -m potency_kg.cli discover-aliases-deterministic --config configs/casgevy-potency.json
+bin/runner python -m potency_kg.cli list-aliases --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli embed --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli classify-jev --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli extract --config configs/casgevy-potency.json
@@ -86,9 +89,13 @@ bin/runner python -m potency_kg.cli export-kg --config configs/casgevy-potency.j
 bin/runner python -m potency_kg.cli inspect-kg --config configs/casgevy-potency.json
 ```
 
-The one-command workflow runs `preflight`, `import`, optional `embed`,
-`classify-jev`, `extract`, and `materialize`, then explicitly `refresh-graph` and
-`export-kg`:
+The exact workflow order is `preflight`, `import`, `load-alias-seeds`,
+`discover-aliases-deterministic`, optional `discover-aliases-llm`, explicit alias inspection and
+review, `embed`, `classify-jev`, `extract`, `materialize`, `refresh-graph`,
+`export-kg`, then read-only inspection (and optionally retrieval smoke). The
+one-command workflow runs the credential-free stages through deterministic discovery
+before deciding whether the real-model semantic stages are enabled, then explicitly
+refreshes and exports:
 
 ```bash
 bin/runner python -m potency_kg.cli run-kg \
@@ -102,11 +109,13 @@ derived versions, counts, reuse decisions, sanitized model audits, graph validat
 and artifact paths. A stage failure stops later stages and returns nonzero; export
 and current promotion occur only after graph validation.
 
-For a manual structural-only run:
+For a manual structural-only run, include alias preparation before graph refresh:
 
 ```bash
 bin/runner python -m potency_kg.cli preflight --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli import --config configs/casgevy-potency.json
+bin/runner python -m potency_kg.cli load-alias-seeds --config configs/casgevy-potency.json
+bin/runner python -m potency_kg.cli discover-aliases-deterministic --config configs/casgevy-potency.json
 bin/runner python -m potency_kg.cli refresh-graph --config configs/casgevy-potency.json --mode structural
 bin/runner python -m potency_kg.cli export-kg --config configs/casgevy-potency.json --output results/kg
 ```
@@ -137,6 +146,55 @@ The extraction schema is built from only the selected bundles plus universal
 assertion/provenance fields. Local references and exact supporting quotes must
 validate. A malformed or ungrounded response creates no partial active extraction.
 
+## Scoped alias management
+
+Aliases are never global. The registry and its evidence are constrained to the
+exact tenant/project from the descriptor. Its two layers have different ownership:
+
+- `static_config` rows originate in
+  `lib/potency_kg/config_data/scoped_aliases.json`. They load approved, include
+  immutable configuration evidence, and can change only through that source file.
+  An unchanged seed reload is a no-op; removal retires the static row with its
+  evidence intact, and a target change retires-and-adds atomically.
+- `review` rows originate in deterministic, extraction, or optional LLM discovery.
+  They are pending by default. Repeated evidence aggregates under the same scoped
+  proposal, never creates an automatic approval, and a rejected proposal remains
+  rejected when later evidence arrives.
+
+Only approved, typed `Product` and `Assay` mappings affect exact entity resolution.
+Pending and rejected aliases do not alter KG identity. The approved catalog is a
+canonical scoped snapshot with an `alias_catalog_version`; it participates in Jev,
+extraction, profile, materialization, and export reuse identities. Consequently an
+approval or rejection makes existing semantic state stale. It does **not** rewrite
+the active graph or any export: explicitly rerun Jev, extraction, materialization,
+semantic shadow refresh, and export to create a later immutable graph version.
+
+Use the independently callable review seams rather than editing database rows:
+
+```bash
+# View only one scope's queue and approved mappings.
+bin/runner python -m potency_kg.cli list-aliases \
+  --config configs/casgevy-potency.json --status pending
+
+# Inspect the immutable evidence associated with that scoped alias in the
+# `alias_evidence` records before deciding. A review-managed proposal requires the
+# complete typed target to approve.
+bin/runner python -m potency_kg.cli review-alias \
+  --config configs/casgevy-potency.json --alias-id <alias-id> \
+  --decision approved --reviewer <operator> --entity-type Product \
+  --canonical-key casgevy --canonical-name CASGEVY
+
+# Rejection records the reviewer and optional audit note; it never deletes evidence.
+bin/runner python -m potency_kg.cli review-alias \
+  --config configs/casgevy-potency.json --alias-id <alias-id> \
+  --decision rejected --reviewer <operator> --note "unsupported synonym"
+```
+
+`discover-aliases-llm` is an optional, separately invoked stage. It is disabled by
+default, makes no request unless explicitly enabled, and shares the generation
+credential gate. Failures are sanitized and auditable but do not prevent the
+structural workflow or approve an alias.
+
 ## Transaction and last-known-good guarantees
 
 - Import is manifest-first and source-transactional. A failed source activation does
@@ -146,8 +204,9 @@ validate. A malformed or ungrounded response creates no partial active extractio
 - Jev response/selection history is immutable. The mutable processing row exposes a
   machine-readable current state and reason.
 - A validated extraction is resolved and materialized with its current pointer in
-  one owner transaction. Assertion, mention, alias-candidate, node, and edge
-  provenance is scope constrained by the database.
+  one owner transaction. Assertion, mention, approved-alias, node, and edge
+  provenance is scope constrained by the database. The transaction recomputes the
+  scoped catalog and refuses an extraction whose recorded catalog version is stale.
 - AGE refresh builds a shadow graph, validates counts, labels, endpoints,
   provenance, and absence of passage-text leakage, then atomically activates it.
   Any failure preserves the previous active graph. The former graph is cleaned only
@@ -183,24 +242,19 @@ location because immutable scenario directories are created with refusal on
 collision; the underlying source/import/version operations themselves are
 idempotent and reconnect is verified.
 
-`notebooks/01_build_knowledge_graph.ipynb` is a thin orchestrator over
-`run_kg_workflow`; it owns no pipeline implementation and verifies refresh/export are
-the final stages. `notebooks/02_inspect_knowledge_graph.ipynb` reads counts and active
-graph state by default. Only an explicit retrieval-smoke gate performs one query
-embedding and writes a bounded, sanitized trace containing the query hash, versions,
-hit/seed/edge identifiers, limits, and exact selected source references.
+`notebooks/01_build_knowledge_graph.ipynb` is a thin, ordered walkthrough of the
+same public stage owners used by the CLI; it owns no pipeline logic. Each write stage
+has an explanation of inputs, outputs, database effects, idempotent reruns, and
+invalidation, followed by a read-only inspection cell. In particular, seed loading,
+deterministic discovery, optional LLM discovery, alias inspection/review, and the
+later semantic rebuild are separate cells: changing an approval never silently
+rematerializes or republishes the graph. `notebooks/02_inspect_knowledge_graph.ipynb`
+reads counts and active graph state by default. Only an explicit retrieval-smoke gate
+performs one query embedding and writes a bounded, sanitized trace containing the
+query hash, versions, hit/seed/edge identifiers, limits, and exact selected source
+references.
 
 Downstream hybrid RAG must consume the validated target of `results/kg/current/`,
 not a staging directory or database work-in-progress. It must preserve the export's
 scope and provenance and treat the graph as an intermediate evidence contract, not
 as an answer-generation result.
-
-## Deferred alias correction
-
-Trusted aliases come only from the application-owned project profile and carry
-descriptor/profile provenance. Model-extracted alias candidates retain exact
-evidence provenance and remain pending. Human approval, redirects, UI, and review-
-triggered rematerialization are deliberately deferred. A later correction workflow
-must approve a candidate, create an auditable redirect, derive affected versions,
-rematerialize impacted evidence, rebuild/validate a shadow graph, and atomically
-publish a new export while preserving all prior history.
