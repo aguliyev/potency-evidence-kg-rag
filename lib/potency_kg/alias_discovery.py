@@ -22,7 +22,7 @@ from .prompt_resources.alias_discovery import assemble_prompt
 
 DETERMINISTIC_ALIAS_DETECTOR = "document-alias-patterns"
 DETERMINISTIC_ALIAS_DETECTOR_VERSION = "document-alias-patterns-v1"
-DEFAULT_ENABLE_LLM_ALIAS_DISCOVERY = False
+DEFAULT_ENABLE_LLM_ALIAS_DISCOVERY = True
 LLM_ALIAS_DETECTOR = "structured-document-alias-discovery"
 LLM_ALIAS_DETECTOR_VERSION = "structured-document-alias-discovery-v1"
 MAX_ALIAS_DISCOVERY_CHARACTERS = 48_000
