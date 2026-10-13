@@ -176,18 +176,33 @@ def validate_complete_response(
         raise ValueError("passage-local IDs must be nonempty and unique")
 
     record_types: dict[str, str] = {}
+    dropped: list[dict[str, object]] = []  # records removed (ungroundable quote or dangling reference), kept for audit
+    dropped_ids: set[str] = set()
+
+    def drop(kind: str, record: Mapping[str, object], reason: str) -> None:
+        dropped_ids.add(str(record["local_id"]))
+        dropped.append({"kind": kind, "local_id": record["local_id"], "reason": reason, "record": dict(record)})
+
+    def ground(kind: str, record: Mapping[str, object]) -> dict[str, object] | None:
+        try:
+            return _ground_quote(record, substitution)
+        except ValueError as error:  # quote not in passage / bad occurrence: lose this record, not the passage
+            drop(kind, record, str(error))
+            return None
+
     grounded_entities: list[dict[str, object]] = []
     for entity in entities:
         entity_type = str(entity.get("type"))
         if entity_type not in allowed:
             raise ValueError(f"unselected entity type: {entity_type}")
-        local_id = str(entity["local_id"])
-        record_types[local_id] = entity_type
-        grounded_entities.append(_ground_quote(entity, substitution))
+        grounded = ground(entity_type, entity)
+        if grounded is not None:
+            record_types[str(entity["local_id"])] = entity_type
+            grounded_entities.append(grounded)
     if "RedactionMention" in allowed:
         for number, span in enumerate(substitution.spans, start=1):
             local_id = f"redaction_{number}"
-            if local_id in record_types:
+            if local_id in record_types or local_id in dropped_ids:
                 raise ValueError("passage-local IDs must be nonempty and unique")
             record_types[local_id] = "RedactionMention"
             grounded_entities.append({
@@ -200,27 +215,38 @@ def validate_complete_response(
     grounded_assertions: list[dict[str, object]] = []
     assertion_ids: set[str] = set()
     for assertion in assertions:
-        local_id = str(assertion["local_id"])
-        assertion_ids.add(local_id)
-        record_types[local_id] = "Assertion"
         claim = str(assertion["claim"])
         if not claim.strip() or "\n" in claim:
             raise ValueError("assertions must be atomic single records")
-        grounded_assertions.append(_ground_quote(assertion, substitution))
+        grounded = ground("Assertion", assertion)
+        if grounded is not None:
+            local_id = str(assertion["local_id"])
+            assertion_ids.add(local_id)
+            record_types[local_id] = "Assertion"
+            grounded_assertions.append(grounded)
 
-    for entity in entities:
-        if (
-            entity.get("type") == "AliasCandidate"
-            and record_types.get(str(entity.get("target_local_id"))) not in {"Product", "Assay"}
-        ):
-            raise ValueError("alias candidate contains an unresolved passage-local Product or Assay reference")
+    kept_entities: list[dict[str, object]] = []
+    for entity in grounded_entities:
+        if entity.get("type") == "AliasCandidate":
+            target = str(entity.get("target_local_id"))
+            if target in dropped_ids:
+                drop("AliasCandidate", entity, "target entity was dropped")
+                record_types.pop(str(entity["local_id"]), None)
+                continue
+            if record_types.get(target) not in {"Product", "Assay"}:
+                raise ValueError("alias candidate contains an unresolved passage-local Product or Assay reference")
+        kept_entities.append(entity)
+    grounded_entities = kept_entities
 
     grounded_relationships: list[dict[str, object]] = []
     for relationship in relationships:
         assertion_id = relationship.get("assertion_local_id")
+        source_id, target_id = relationship.get("source_local_id"), relationship.get("target_local_id")
+        if dropped_ids & {assertion_id, source_id, target_id}:
+            drop("Relationship", relationship, "an endpoint or its assertion was dropped")
+            continue
         if assertion_id not in assertion_ids:
             raise ValueError("evidence relationship contains an unresolved passage-local assertion reference")
-        source_id, target_id = relationship.get("source_local_id"), relationship.get("target_local_id")
         source_type = "SourcePassage" if source_id == "source_passage" else record_types.get(str(source_id))
         target_type = "SourcePassage" if target_id == "source_passage" else record_types.get(str(target_id))
         if source_type is None or target_type is None:
@@ -237,15 +263,23 @@ def validate_complete_response(
         str(relationship["local_id"]) for relationship in grounded_relationships
     }
     for source_ref in source_refs:
+        if source_ref.get("record_local_id") in dropped_ids:
+            drop("SourceRef", source_ref, "referenced record was dropped")
+            continue
         if source_ref.get("record_local_id") not in resolvable:
             raise ValueError("source reference contains an unresolved passage-local record reference")
-        grounded_refs.append(_ground_quote(source_ref, substitution))
-    return {
+        grounded = ground("SourceRef", source_ref)
+        if grounded is not None:
+            grounded_refs.append(grounded)
+    result: dict[str, object] = {
         "entities": grounded_entities,
         "assertions": grounded_assertions,
         "relationships": grounded_relationships,
         "source_refs": grounded_refs,
     }
+    if dropped:
+        result["dropped"] = dropped
+    return result
 
 
 def _unselected_error(error: BaseException, allowed: set[str]) -> bool:

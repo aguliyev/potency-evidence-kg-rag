@@ -303,3 +303,27 @@ def test_redaction_mentions_are_derived_from_spans_not_the_model() -> None:
     out = validate_complete_response(model.model_validate({"entities": [{"type": "RedactionMention", "local_id": "m"}]}), sub, ("redaction_uncertainty",))
     got = [(e["model_start"], e["model_end"], e["original_quote"]) for e in out["entities"]]
     assert got == [(s.model_start, s.model_end, "(b)(4)") for s in sub.spans] and len(got) == 2
+
+
+def test_ungroundable_quote_drops_record_and_dependents_not_the_passage() -> None:
+    from potency_kg.contracts import ScopedPassageIdentity
+    from potency_kg.extraction import build_response_model, validate_complete_response
+    from potency_kg.redactions import substitute_redactions
+
+    sub = substitute_redactions(ScopedPassageIdentity("t", "p", "s", "v", "x"), "CASGEVY treats SCD. It is approved.")
+    model = build_response_model(("product_context", "alias_identity"))
+    out = validate_complete_response(model.model_validate({
+        "entities": [
+            {"type": "Product", "local_id": "e1", "name": "CASGEVY", "supporting_quote": "CASGEVY"},
+            {"type": "Indication", "local_id": "e2", "name": "x", "supporting_quote": "not in the passage"},
+            {"type": "AliasCandidate", "local_id": "e3", "candidate": "c", "target_local_id": "e2", "supporting_quote": "SCD"},
+        ],
+        "assertions": [{"local_id": "a1", "claim": "It is approved.", "supporting_quote": "It is approved."}],
+        "relationships": [
+            {"local_id": "r1", "relation_type": "applies_to", "source_local_id": "a1", "target_local_id": "e1", "assertion_local_id": "a1"},
+            {"local_id": "r2", "relation_type": "applies_to", "source_local_id": "a1", "target_local_id": "e2", "assertion_local_id": "a1"},
+        ],
+    }), sub, ("product_context", "alias_identity"))
+    assert [e["local_id"] for e in out["entities"]] == ["e1"]
+    assert [r["local_id"] for r in out["relationships"]] == ["r1"]
+    assert {d["local_id"] for d in out["dropped"]} == {"e2", "e3", "r2"}

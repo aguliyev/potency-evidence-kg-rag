@@ -395,7 +395,7 @@ def test_second_unselected_response_records_one_atomic_failure_without_drafts(
 
 
 def test_post_response_validation_failure_counts_request_usage_once(db_engine) -> None:
-    """A local grounding failure must not double-count the one provider response already received."""
+    """A local validation failure must not double-count the one provider response already received."""
     with db_engine.begin() as connection:
         _insert_selected(connection, "CASGEVY was reviewed.", ["product_context"])
     invalid_quote = {
@@ -405,8 +405,12 @@ def test_post_response_validation_failure_counts_request_usage_once(db_engine) -
                 "type": "Product",
                 "local_id": "e1",
                 "name": "CASGEVY",
-                "supporting_quote": "not in the passage",
+                "supporting_quote": "CASGEVY",
             }
+        ],
+        "relationships": [  # structural error: an ungroundable quote now only drops its record
+            {"local_id": "r1", "relation_type": "applies_to", "source_local_id": "e1",
+             "target_local_id": "e1", "assertion_local_id": "missing"}
         ],
     }
     client = _ExtractionDouble([invalid_quote])
