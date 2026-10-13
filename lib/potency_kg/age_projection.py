@@ -234,7 +234,10 @@ def _build_edges(connection: Connection, graph_name: str, snapshot: ProjectionSn
             node_types.get(str(row["target_node_id"])),
         )
         if endpoint_types not in ALLOWED_RELATION_ENDPOINTS[edge_type]:
-            raise GraphRefreshError("edge endpoint types are not allowlisted")
+            raise GraphRefreshError(
+                f"edge endpoint types are not allowlisted: {edge_type} {endpoint_types} "
+                f"({row['source_node_id']} -> {row['target_node_id']})"
+            )
         _cypher(
             connection,
             graph_name,
