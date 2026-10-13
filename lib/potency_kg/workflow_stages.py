@@ -227,7 +227,7 @@ def classify_jev_stage(config: Path, *, env: Mapping[str, str] | None = None) ->
 
 def extract_stage(config: Path, *, env: Mapping[str, str] | None = None) -> object:
     environment = os.environ if env is None else env
-    return _guarded_stage(config, lambda _descriptor, scope, engine: extract_selected_passages(engine, scope, _generation_client(environment), 1))
+    return _guarded_stage(config, lambda _descriptor, scope, engine: extract_selected_passages(engine, scope, _generation_client(environment), 4))
 
 
 def materialize_stage(config: Path) -> object:

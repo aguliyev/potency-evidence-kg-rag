@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Annotated, Literal, Union
@@ -618,7 +618,7 @@ def extract_selected_passages(
     client: StructuredExtractionClient,
     max_concurrency: int,
 ) -> ExtractionReport:
-    """Extract selected passages concurrently, validating each response atomically before persistence."""
+    """Extract selected passages sequentially, persisting each result immediately after validation."""
     rows = _selected_rows(engine, scope)
     reused: dict[tuple[str, str, str], UUID] = {}
     pending: list[dict[str, object]] = []
@@ -631,13 +631,10 @@ def extract_selected_passages(
             _activate_reused_run(engine, scope, row, run_id)
             reused[key] = run_id
     outcomes: list[_Outcome] = []
-    with ThreadPoolExecutor(max_workers=max(1, int(max_concurrency))) as executor:
-        futures = {executor.submit(_extract_one, row, scope, client): row for row in pending}
-        for future in as_completed(futures):
-            outcomes.append(future.result())
-    outcomes.sort(key=lambda value: (str(value.row["source_id"]), str(value.row["source_version"]), str(value.row["passage_id"])))
-    for outcome in outcomes:
+    for row in pending:
+        outcome = _extract_one(row, scope, client)
         _persist_outcome(engine, scope, client, outcome)
+        outcomes.append(outcome)
     outcome_by_key = {
         (str(outcome.row["source_id"]), str(outcome.row["source_version"]), str(outcome.row["passage_id"])): outcome
         for outcome in outcomes
