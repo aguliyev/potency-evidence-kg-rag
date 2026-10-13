@@ -46,10 +46,11 @@ def assemble_prompt(selected_bundles: tuple[str, ...]) -> str:
         for kind in BUNDLE_TO_TYPES[bundle]:
             if kind not in types:
                 types.append(kind)
+    types = [kind for kind in types if kind != "RedactionMention"]  # derived by the system
     schemas = {kind: TYPE_SCHEMAS[kind] for kind in types}
     sections = [
         UNIVERSAL_INSTRUCTIONS,
-        f"Allowed entity types (use no other type): {', '.join(types)}",
+        f"Allowed entity types (use no other type): {', '.join(types) or 'none (leave entities empty)'}",
         "What to extract:\n" + "\n".join(f"- {kind}: {TYPE_GUIDANCE[kind]}" for kind in types),
         f"Selected type schemas: {json.dumps(schemas, sort_keys=True, separators=(',', ':'))}",
         QUOTE_RULES,
@@ -58,7 +59,7 @@ def assemble_prompt(selected_bundles: tuple[str, ...]) -> str:
         RELATIONSHIP_RULES.format(relation_table=_relation_table(types)),
         SOURCE_REF_RULES,
     ]
-    if "RedactionMention" in types:
+    if "redaction_uncertainty" in selected:
         sections.append(REDACTION_RULES)
     sections.append("Universal records: Assertion, SourceRef, EvidenceRelationship.")
     return "\n\n".join(sections)

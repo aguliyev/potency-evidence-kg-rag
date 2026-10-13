@@ -68,9 +68,7 @@ or relationship; supporting_quote follows the quote rules."""
 
 REDACTION_RULES = """\
 Redactions: the passage shows concealed text as tokens like [REDACTED:<passage_id>:<n>]. Never guess what \
-is behind a token. A RedactionMention needs model_start and model_end: the 0-based character offsets of \
-that token's first character and one past its last character in the passage text exactly as given to you; \
-they must match one token exactly."""
+is behind a token. Do not output RedactionMention records: the system records every token itself."""
 
 RETRY_INSTRUCTION = (
     "The previous response used a type outside the selected bundles. Return a complete "
@@ -88,7 +86,7 @@ TYPE_SCHEMAS: dict[str, dict[str, object]] = {
     "MeasuredAttribute": {"required": ("local_id", "name", "supporting_quote")},
     "RegulatoryInteraction": {"required": ("local_id", "chronology_state", "supporting_quote")},
     "ReviewConclusion": {"required": ("local_id", "conclusion", "supporting_quote")},
-    "RedactionMention": {"required": ("local_id", "model_start", "model_end")},
+    "RedactionMention": {"required": ("local_id",)},  # derived by the system, not emitted by the model
 }
 
 # One line per type: what to extract.
@@ -102,7 +100,7 @@ TYPE_GUIDANCE: dict[str, str] = {
     "MeasuredAttribute": "a quantity or attribute that is measured (e.g. HbF level); name = as written",
     "RegulatoryInteraction": "a meeting, request, agreement, review step or other agency/sponsor exchange; chronology_state = proposed, requested, revised, accepted, rejected, unresolved or reported, as the passage states it; description optional",
     "ReviewConclusion": "an explicit reviewer or agency conclusion or recommendation; conclusion = the conclusion in one sentence",
-    "RedactionMention": "a [REDACTED:...] token present in the passage (see redaction rules)",
+    "RedactionMention": "(recorded automatically by the system; do not emit)",
 }
 
 # --- Optional alias discovery --------------------------------------------------------------------

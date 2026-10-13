@@ -291,3 +291,15 @@ def test_instructor_adapter_preserves_only_the_unselected_type_retry_signal() ->
 
     with pytest.raises(GenerationUnselectedTypeError, match="outside selected bundles"):
         client.extract("assay", model, "prompt")
+
+
+def test_redaction_mentions_are_derived_from_spans_not_the_model() -> None:
+    from potency_kg.contracts import ScopedPassageIdentity
+    from potency_kg.extraction import build_response_model, validate_complete_response
+    from potency_kg.redactions import substitute_redactions
+
+    sub = substitute_redactions(ScopedPassageIdentity("t", "p", "s", "v", "x"), "Dose (b)(4) and (b)(4) kept.")
+    model = build_response_model(("redaction_uncertainty",))
+    out = validate_complete_response(model.model_validate({"entities": [{"type": "RedactionMention", "local_id": "m"}]}), sub, ("redaction_uncertainty",))
+    got = [(e["model_start"], e["model_end"], e["original_quote"]) for e in out["entities"]]
+    assert got == [(s.model_start, s.model_end, "(b)(4)") for s in sub.spans] and len(got) == 2

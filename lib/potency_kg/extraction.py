@@ -71,7 +71,7 @@ _ENTITY_FIELDS: dict[str, dict[str, tuple[object, object]]] = {
     "MeasuredAttribute": {"name": (str, ...)},
     "RegulatoryInteraction": {"chronology_state": (str, ...), "description": (str | None, None)},
     "ReviewConclusion": {"conclusion": (str, ...)},
-    "RedactionMention": {"model_start": (int, ...), "model_end": (int, ...)},
+    "RedactionMention": {},  # never emitted by the model: derived from the redaction spans
 }
 
 
@@ -169,7 +169,8 @@ def validate_complete_response(
     """Validate the complete passage response before any draft row can be persisted."""
     allowed = set(selected_entity_types(selected_bundles))
     payload = response.model_dump(mode="json")
-    entities = payload.get("entities", [])
+    # RedactionMention records are derived from the known redaction spans, never taken from the model.
+    entities = [entity for entity in payload.get("entities", []) if entity.get("type") != "RedactionMention"]
     assertions = payload.get("assertions", [])
     relationships = payload.get("relationships", [])
     source_refs = payload.get("source_refs", [])
@@ -188,20 +189,19 @@ def validate_complete_response(
             raise ValueError(f"unselected entity type: {entity_type}")
         local_id = str(entity["local_id"])
         record_types[local_id] = entity_type
-        if entity_type == "RedactionMention":
-            start, end = int(entity["model_start"]), int(entity["model_end"])
-            matching = next((span for span in substitution.spans if (span.model_start, span.model_end) == (start, end)), None)
-            if matching is None:
-                raise ValueError("redaction mention must match an exact substituted token")
-            grounded = dict(entity)
-            grounded.update(
-                original_start=matching.original_start,
-                original_end=matching.original_end,
-                original_quote=substitution.original_text[matching.original_start:matching.original_end],
-            )
-        else:
-            grounded = _ground_quote(entity, substitution)
-        grounded_entities.append(grounded)
+        grounded_entities.append(_ground_quote(entity, substitution))
+    if "RedactionMention" in allowed:
+        for number, span in enumerate(substitution.spans, start=1):
+            local_id = f"redaction_{number}"
+            if local_id in record_types:
+                raise ValueError("passage-local IDs must be nonempty and unique")
+            record_types[local_id] = "RedactionMention"
+            grounded_entities.append({
+                "type": "RedactionMention", "local_id": local_id,
+                "model_start": span.model_start, "model_end": span.model_end,
+                "original_start": span.original_start, "original_end": span.original_end,
+                "original_quote": substitution.original_text[span.original_start:span.original_end],
+            })
 
     grounded_assertions: list[dict[str, object]] = []
     assertion_ids: set[str] = set()
@@ -518,7 +518,7 @@ def _extract_one(row: Mapping[str, object], scope: Scope, client: StructuredExtr
     except Exception as first_error:
         if not _unselected_error(first_error, allowed):
             return outcome(None, "validation_failed", first_error)
-        emphasized = f"{prepared.prompt}\n{RETRY_INSTRUCTION}\nUse only these entity types: {', '.join(selected_entity_types(bundles))}."
+        emphasized = f"{prepared.prompt}\n{RETRY_INSTRUCTION}\nUse only these entity types: {', '.join(t for t in selected_entity_types(bundles) if t != 'RedactionMention') or 'none'}."
         try:
             return outcome(run(emphasized))
         except Exception as second_error:
