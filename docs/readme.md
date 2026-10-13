@@ -134,7 +134,7 @@ and is not part of the normal stop procedure.
 
 After `bin/start`, open:
 
-<http://localhost:8888>
+<http://localhost:8888/?token=q>
 
 Enter the `JUPYTER_TOKEN` from `etc/secrets/.env`. The development default is
 `local-development-token`. If `JUPYTER_HOST_PORT` is changed in `etc/.env`, use the
