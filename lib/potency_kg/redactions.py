@@ -65,15 +65,36 @@ def restore_model_span(substitution: RedactionSubstitution, start: int, end: int
     return OriginalSpan(original_start, original_end, substitution.original_text[original_start:original_end])
 
 
-def restore_model_quote(substitution: RedactionSubstitution, quote: str, occurrence_index: int | None = None) -> OriginalSpan:
+def locate_model_quote(
+    substitution: RedactionSubstitution, quote: str, occurrence_index: int | None = None, *, lenient: bool = False
+) -> tuple[int, int]:
+    """Model-text span of ``quote``. Strict: exact text, repeated quotes need an index.
+
+    lenient (LLM output): falls back to a whitespace-insensitive match when the exact text is absent,
+    and picks the first occurrence when a repeated quote has no index.
+    """
     if not quote:
         raise ValueError("supporting quote must be nonempty")
-    occurrences = [match.start() for match in re.finditer(re.escape(quote), substitution.model_text)]
-    if not occurrences:
+    text = substitution.model_text
+    spans = [(m.start(), m.end()) for m in re.finditer(re.escape(quote), text)]
+    if not spans and lenient and quote.split():
+        pattern = r"\s+".join(re.escape(word) for word in quote.split())
+        spans = [(m.start(), m.end()) for m in re.finditer(pattern, text)]
+    if not spans:
         raise ValueError("supporting quote does not occur in model text")
-    if len(occurrences) > 1 and occurrence_index is None:
+    if len(spans) > 1 and occurrence_index is None and not lenient:
         raise ValueError("repeated supporting quote requires occurrence_index")
     index = occurrence_index or 0
-    if index < 0 or index >= len(occurrences):
-        raise ValueError("occurrence_index is out of bounds")
-    return restore_model_span(substitution, occurrences[index], occurrences[index] + len(quote))
+    if index < 0 or index >= len(spans):
+        if lenient and occurrence_index is not None:
+            index = 0  # model miscounted occurrences; the quote itself is verbatim
+        else:
+            raise ValueError("occurrence_index is out of bounds")
+    return spans[index]
+
+
+def restore_model_quote(
+    substitution: RedactionSubstitution, quote: str, occurrence_index: int | None = None, *, lenient: bool = False
+) -> OriginalSpan:
+    start, end = locate_model_quote(substitution, quote, occurrence_index, lenient=lenient)
+    return restore_model_span(substitution, start, end)

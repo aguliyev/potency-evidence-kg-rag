@@ -25,7 +25,8 @@ from .prompt_resources.extraction import RETRY_INSTRUCTION, assemble_prompt
 from .prompt_resources.jev_bundles import BUNDLE_TO_TYPES
 from .redactions import (
     RedactionSubstitution,
-    restore_model_quote,
+    locate_model_quote,
+    restore_model_span,
     substitute_redactions,
 )
 
@@ -140,24 +141,17 @@ def build_response_model(selected_bundles: Iterable[str]) -> type[BaseModel]:
 
 
 def _ground_quote(record: Mapping[str, object], substitution: RedactionSubstitution) -> dict[str, object]:
+    index = record.get("occurrence_index") if isinstance(record.get("occurrence_index"), int) else None
+    start, end = locate_model_quote(substitution, str(record["supporting_quote"]), index, lenient=True)
+    span = restore_model_span(substitution, start, end)
     grounded = dict(record)
-    span = restore_model_quote(
-        substitution,
-        str(record["supporting_quote"]),
-        record.get("occurrence_index") if isinstance(record.get("occurrence_index"), int) else None,
-    )
     grounded.update(
-        {
-            "model_start": substitution.model_text.find(str(record["supporting_quote"]))
-            if record.get("occurrence_index") in (None, 0)
-            else [i for i in range(len(substitution.model_text)) if substitution.model_text.startswith(str(record["supporting_quote"]), i)][int(record["occurrence_index"])],
-            "model_end": 0,
-            "original_start": span.start,
-            "original_end": span.end,
-            "original_quote": span.text,
-        }
+        model_start=start,
+        model_end=end,
+        original_start=span.start,
+        original_end=span.end,
+        original_quote=span.text,
     )
-    grounded["model_end"] = int(grounded["model_start"]) + len(str(record["supporting_quote"]))
     return grounded
 
 

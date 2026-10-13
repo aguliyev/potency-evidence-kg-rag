@@ -25,3 +25,14 @@ def test_redaction_crossing_and_ambiguous_quotes_are_rejected() -> None:
     with pytest.raises(ValueError):
         restore_model_quote(substitution, "same")
     assert restore_model_quote(substitution, "same", occurrence_index=1).text == "same"
+
+
+def test_lenient_quote_matching_for_llm_output() -> None:
+    from potency_kg.redactions import locate_model_quote
+
+    sub = substitute_redactions(SourceRef("t", "p", "s", "v", "x"), "alpha beta\ngamma. alpha beta\ngamma.")
+    with pytest.raises(ValueError):
+        locate_model_quote(sub, "alpha beta gamma.")  # strict: whitespace differs
+    assert locate_model_quote(sub, "alpha beta gamma.", lenient=True) == (0, 17)  # first occurrence
+    assert locate_model_quote(sub, "alpha beta gamma.", 1, lenient=True) == (18, 35)
+    assert locate_model_quote(sub, "alpha beta\ngamma.", 9, lenient=True) == (0, 17)  # bad index tolerated
