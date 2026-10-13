@@ -1,43 +1,456 @@
-# Local Notebook and Graph Database
+# Potency evidence knowledge graph
 
-This optional local stack runs JupyterLab with PostgreSQL 17, pgvector, and Apache AGE. Docker Compose builds the database and Python images, starts PostgreSQL, applies pending Alembic migrations, and then starts JupyterLab. The database health check gates migrations, and successful migrations gate the notebook service.
+This repository builds a scoped, evidence-backed knowledge graph from the supplied
+CASGEVY, regulatory, and precedent-source corpus. It preserves source provenance,
+runs optional model-assisted classification and extraction, resolves approved
+aliases, materializes a canonical graph, and publishes a validated immutable export
+under `results/kg/current/`.
 
-Dockerfiles and the Compose definition are under `docker/`.
+The project is a graph-generation pipeline, not an answer-generation application.
+A later retrieval or RAG system can consume the published graph, but it must retain
+the graph's tenant/project scope, source references, and versioned provenance.
 
-## Setup
+## What the system does
 
-Docker and its Compose plugin must already be installed. Run:
+At a high level, the pipeline:
+
+1. Verifies the supplied configuration and corpus without modifying them.
+2. Imports documents and passages into PostgreSQL.
+3. Loads approved static aliases and discovers additional review candidates.
+4. Optionally embeds, classifies, and extracts structured evidence with configured
+   model providers.
+5. Resolves extracted Product and Assay mentions through the approved scoped alias
+   catalog.
+6. Materializes canonical entities, assertions, relationships, and provenance.
+7. Projects and validates an Apache AGE graph.
+8. Publishes an immutable JSONL export and promotes it as `results/kg/current/`.
+
+Every operation is scoped by the `tenant_id` and `project_id` in the selected
+configuration. Source history, model runs, alias evidence, graph versions, and
+exports remain auditable. Repeating an unchanged operation reuses or reports the
+existing result instead of inventing a new version.
+
+## Local architecture
+
+The Docker Compose stack contains:
+
+- **`db`** — PostgreSQL 17 with pgvector and Apache AGE.
+- **`migrate`** — a one-shot Alembic migration service.
+- **`notebook`** — Python 3.12 and JupyterLab with the repository mounted at
+  `/workspace`.
+- **`runner`** — the supported command and test environment used by `bin/runner`.
+
+The database is stored in the named `deffai_postgres_data` Docker volume. Normal
+stops preserve it. The repository's `configs/`, `corpus/`, `fixtures/`, and
+`schema/` directories are protected inputs and are mounted read-only in containers.
+
+## Prerequisites
+
+Install the following before setup:
+
+- Git.
+- Docker Desktop, or Docker Engine with the Docker Compose plugin.
+- Enough disk space to build the PostgreSQL and Python images and retain the local
+  database volume.
+
+Confirm Docker is running:
+
+```bash
+docker version
+docker compose version
+```
+
+Run all remaining commands from the repository root.
+
+## First-time setup
+
+Build the local images and create the private environment file:
 
 ```bash
 bin/install
+```
+
+`bin/install` performs three actions:
+
+1. Verifies that Docker and the Compose plugin are available.
+2. Copies `etc/secrets/.env.example` to `etc/secrets/.env` when the private file
+   does not already exist.
+3. Builds the database and Python images.
+
+Review `etc/secrets/.env` after the first installation. It is ignored by Git and
+must not be committed.
+
+The default local-only values are sufficient for the structural workflow:
+
+```dotenv
+POSTGRES_PASSWORD=notebook-local-dev
+JUPYTER_TOKEN=local-development-token
+LLM_API_KEY=
+EMBEDDING_LLM_API_KEY=
+TYPESAFE_API_KEY=
+```
+
+Shared, non-secret settings live in `etc/.env`. This file controls the PostgreSQL
+database name and ports, the Jupyter host port, and model endpoint/model names.
+
+## Start the stack
+
+Start PostgreSQL, apply migrations, and launch JupyterLab:
+
+```bash
 bin/start
 ```
 
-`bin/install` checks Docker and Compose, creates `etc/secrets/.env` from `etc/secrets/.env.example` if it does not exist, and builds the images. `bin/start` starts the stack in the background. Open JupyterLab at <http://localhost:8888> and use the `JUPYTER_TOKEN` value in `etc/secrets/.env` (the local default is `local-development-token`).
+The command builds changed images, starts the services in the background, waits for
+PostgreSQL to become healthy, applies pending migrations, and starts Jupyter only
+after migration succeeds.
 
-You can also start Compose directly after `bin/install`:
+Check service state with:
 
 ```bash
-docker compose -f docker/compose.yaml --env-file etc/.env --env-file etc/secrets/.env up --build --detach
+docker compose -f docker/compose.yaml \
+  --env-file etc/.env --env-file etc/secrets/.env ps
 ```
 
-To stop the containers while keeping database data, run `bin/stop`. Run `bin/migrate` to apply migrations on demand. The named `deffai_postgres_data` volume is preserved by `bin/stop`.
+Apply migrations again without restarting the stack when needed:
 
-## Environment configuration
+```bash
+bin/migrate
+```
 
-`etc/.env` contains shared local configuration. `etc/secrets/.env` contains credentials and tokens, and is ignored by Git. The tracked `etc/secrets/.env.example` supplies development-only values when `bin/install` creates the private file. Replace those values for your local use and do not commit the private file.
+## Stop the stack
 
-Every Compose service loads both files through `env_file`. The lifecycle scripts also pass both files to Compose so values used for port bindings and the Jupyter command are available during Compose interpolation.
+Stop and remove the containers while retaining database data:
 
-The default host connection is `postgresql+psycopg://notebook:notebook-local-dev@localhost:5432/notebook`. Notebook code connects to host `db`, port `5432`, using `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`. Change the host ports in `etc/.env`, and database credentials or the Jupyter token in `etc/secrets/.env`.
+```bash
+bin/stop
+```
 
-## Stack details
+The `deffai_postgres_data` volume is intentionally preserved, so the next
+`bin/start` continues from the same database. Removing that volume is destructive
+and is not part of the normal stop procedure.
 
-- PostgreSQL 17 with pinned pgvector 0.8.7 and Apache AGE 1.7.0.
-- Python 3.12 with pinned notebook and migration dependencies.
-- Alembic migrations enable the `vector` and `age` extensions.
-- The `db` health check gates the one-shot `migrate` service; `notebook` waits until migration succeeds.
-- The database uses the named `deffai_postgres_data` volume so its data persists across container stops.
-- No application tables, named AGE graphs, ingestion, or production deployment configuration are included.
+## Use JupyterLab
 
-Put importable Python modules in `lib/` and notebooks in `notebooks/`. Both directories are mounted into `/workspace` in the notebook container, and `lib/` is on `PYTHONPATH`, so host edits are available to notebook kernels immediately.
+After `bin/start`, open:
+
+<http://localhost:8888>
+
+Enter the `JUPYTER_TOKEN` from `etc/secrets/.env`. The development default is
+`local-development-token`. If `JUPYTER_HOST_PORT` is changed in `etc/.env`, use the
+new port instead of `8888`.
+
+The repository is mounted at `/workspace`, and `lib/` is already on `PYTHONPATH`.
+Edits made on the host are therefore visible to notebook kernels without copying
+files into the container.
+
+Use the notebooks in this order:
+
+1. **`notebooks/01_build_knowledge_graph.ipynb`** — runs the pipeline as explicit,
+   independently rerunnable stages. Each write stage is followed by a read-only
+   inspection cell showing scoped counts, versions, statuses, and sanitized failure
+   totals.
+2. **`notebooks/02_inspect_knowledge_graph.ipynb`** — inspects the active graph and
+   published artifacts. Its optional retrieval smoke test remains disabled unless
+   `KG_ENABLE_RETRIEVAL_SMOKE=true` is set explicitly.
+
+The notebooks call the same public stage functions as the CLI. They intentionally
+contain no separate pipeline implementation and do not automatically approve alias
+candidates.
+
+## Run from the command line
+
+`bin/runner` executes commands inside the same image and environment used by
+Jupyter:
+
+```bash
+bin/runner python -m potency_kg.cli run-kg \
+  --config configs/casgevy-potency.json \
+  --output results/kg
+```
+
+With no real-model gate, this runs the credential-free structural path through
+import, alias preparation, structural graph refresh, inspection, and export. Model
+stages are reported as `not_run`.
+
+To run an individual stage, use the corresponding command:
+
+```bash
+bin/runner python -m potency_kg.cli preflight \
+  --config configs/casgevy-potency.json
+bin/runner python -m potency_kg.cli inspect-kg \
+  --config configs/casgevy-potency.json
+```
+
+The detailed command sequence is documented in
+[Knowledge graph generation and operation](kg-generation.md).
+
+## Pipeline stages in detail
+
+### 1. Preflight
+
+Preflight validates the project descriptor, corpus manifest, normalized records,
+raw-file checksums, source counts, passage counts, replacement declarations, and
+path containment. It reads no model settings and writes no database state.
+
+This stage establishes that the supplied inputs are complete and internally
+consistent before any import begins.
+
+```bash
+bin/runner python -m potency_kg.cli preflight \
+  --config configs/casgevy-potency.json
+```
+
+### 2. Structural import
+
+Import writes immutable source documents and passages, advances explicit source
+heads, and creates document/passage structural graph records. Each source is
+transactional: an invalid or failed source does not leave partially active rows.
+
+An unchanged import is idempotent. A newer source version replaces the current head
+only when the descriptor declares the replacement; prior versions remain available
+as history.
+
+```bash
+bin/runner python -m potency_kg.cli import \
+  --config configs/casgevy-potency.json
+```
+
+### 3. Static alias loading
+
+The seed loader reconciles the source-controlled alias configuration into the
+tenant/project-scoped alias registry. Static mappings are trusted application data,
+load as approved, and carry immutable configuration evidence.
+
+Removing or changing a static mapping retires the old row without deleting its
+history. Human review commands cannot modify static rows.
+
+```bash
+bin/runner python -m potency_kg.cli load-alias-seeds \
+  --config configs/casgevy-potency.json
+```
+
+### 4. Alias discovery and review
+
+Deterministic discovery scans active passages for supported alias patterns without
+constructing a model client. Repeated observations add evidence to the same scoped
+candidate. New candidates remain pending and never affect entity identity until a
+reviewer explicitly approves them.
+
+```bash
+bin/runner python -m potency_kg.cli discover-aliases-deterministic \
+  --config configs/casgevy-potency.json
+bin/runner python -m potency_kg.cli list-aliases \
+  --config configs/casgevy-potency.json --status pending
+bin/runner python -m potency_kg.cli list-alias-evidence \
+  --config configs/casgevy-potency.json --alias-id <alias-id>
+```
+
+Approval requires a reviewer and a complete Product or Assay target. Rejection
+preserves the candidate and all evidence. A later reconsideration is audited.
+
+```bash
+bin/runner python -m potency_kg.cli review-alias \
+  --config configs/casgevy-potency.json \
+  --alias-id <alias-id> --decision approved --reviewer <operator> \
+  --entity-type Product --canonical-key casgevy --canonical-name CASGEVY
+```
+
+The optional LLM discovery command is a separate, explicit operation. It is
+disabled by default and does not approve its proposals automatically.
+
+```bash
+bin/runner python -m potency_kg.cli discover-aliases-llm \
+  --config configs/casgevy-potency.json
+```
+
+### 5. Embeddings and index snapshot
+
+The embedding stage generates or reuses 3072-dimensional vectors for active
+passages and records an immutable index snapshot. Vector reuse depends on normalized
+content and provider identity; index identity also includes source membership.
+
+```bash
+bin/runner python -m potency_kg.cli embed \
+  --config configs/casgevy-potency.json
+```
+
+### 6. Jev classification and selection
+
+Jev sends each passage through the fixed seven-question Noul classification bundle.
+All probabilities are persisted before inclusive thresholds select extraction
+bundles. A passage with no selected bundle makes no extraction request, and a failed
+classification never falls back to unrestricted extraction.
+
+```bash
+bin/runner python -m potency_kg.cli classify-jev \
+  --config configs/casgevy-potency.json
+```
+
+### 7. Structured extraction
+
+Extraction builds a response schema from only the selected bundles plus universal
+assertion and provenance fields. It validates local identifiers and requires exact
+supporting quotes from the source passage. Invalid or ungrounded output cannot
+become the active extraction.
+
+The extraction snapshot records the exact approved alias catalog used to construct
+the model input.
+
+```bash
+bin/runner python -m potency_kg.cli extract \
+  --config configs/casgevy-potency.json
+```
+
+### 8. Resolution and materialization
+
+Materialization converts a validated extraction into canonical entities,
+assertions, relationships, and source references. Product and Assay mentions use
+exact normalized matches from the approved scoped alias catalog. Pending, rejected,
+cross-type, or merely similar aliases do not merge entities.
+
+The stage verifies that the extraction's catalog snapshot still matches the live
+catalog and performs semantic writes atomically. If an alias decision changes the
+catalog, rerun the semantic stages before materializing or publishing a replacement
+graph.
+
+```bash
+bin/runner python -m potency_kg.cli materialize \
+  --config configs/casgevy-potency.json
+```
+
+### 9. Graph refresh
+
+Refresh projects relational state into a shadow Apache AGE graph, validates its
+counts, labels, endpoints, provenance, and text-leakage constraints, and then
+activates it atomically. Failure preserves the prior active graph.
+
+Use structural mode when model stages have not run, or semantic mode after
+successful extraction and materialization:
+
+```bash
+bin/runner python -m potency_kg.cli refresh-graph \
+  --config configs/casgevy-potency.json --mode structural
+```
+
+### 10. Export
+
+Export writes a versioned directory beneath `results/kg/history/`, validates the
+manifest and artifact hashes, and then atomically updates the relative
+`results/kg/current` symlink. Existing history is immutable, and a failed export
+does not replace the last-known-good current version.
+
+```bash
+bin/runner python -m potency_kg.cli export-kg \
+  --config configs/casgevy-potency.json --output results/kg
+```
+
+The export includes its manifest, import report, extraction coverage, graph
+validation, graph nodes, and graph edges.
+
+### 11. Inspection
+
+Inspection is read-only. It reports the scoped catalog version, import and
+processing counts, stage statuses and failures, current embedding/index/graph
+bindings, and the validated current export version. Provider exception details and
+credential values are not exposed.
+
+```bash
+bin/runner python -m potency_kg.cli inspect-kg \
+  --config configs/casgevy-potency.json
+```
+
+## Enable real model stages
+
+Structural operation requires no model credentials. To enable the semantic stages,
+set private values in `etc/secrets/.env` and explicitly enable the gate:
+
+```dotenv
+KG_RUN_REAL_MODELS=true
+LLM_API_KEY=<generation-key>
+EMBEDDING_LLM_API_KEY=<embedding-key>
+TYPESAFE_API_KEY=<jev-key>
+```
+
+The endpoint and model names are read from `etc/.env`. A complete semantic
+`run-kg` requires all three setting groups to validate. If the gate is absent or a
+group is incomplete, the composite command remains structural and reports the model
+stages as `not_run`; it does not silently substitute a provider or credential.
+
+Changing the approved alias set does not rewrite an active graph automatically.
+After approving a pending/rejected alias or rejecting an approved alias, explicitly
+rerun Jev, extraction, materialization, semantic refresh, and export.
+
+## Run fixtures and tests
+
+Run the supplied behavior fixtures with offline deterministic adapters:
+
+```bash
+bin/runner python -m potency_kg.cli run-kg-fixtures \
+  --output results/kg/fixtures
+```
+
+Run the offline test suite with:
+
+```bash
+bin/runner pytest -q -m "not real_models"
+```
+
+Real-provider tests are opt-in and report `not_run` when the explicit gate is not
+enabled:
+
+```bash
+bin/runner pytest -q -rs tests/real/test_real_model_stages.py -m real_models
+```
+
+## Troubleshooting
+
+### Jupyter does not start
+
+Check Compose service state and migration logs:
+
+```bash
+docker compose -f docker/compose.yaml \
+  --env-file etc/.env --env-file etc/secrets/.env ps
+docker compose -f docker/compose.yaml \
+  --env-file etc/.env --env-file etc/secrets/.env logs migrate notebook
+```
+
+Jupyter waits for a healthy database and a successful migration, so a database or
+migration failure prevents the notebook service from starting.
+
+### A port is already in use
+
+Change `POSTGRES_HOST_PORT` or `JUPYTER_HOST_PORT` in `etc/.env`, then restart the
+stack with `bin/stop` followed by `bin/start`.
+
+### A command cannot connect to PostgreSQL
+
+Run `bin/start` first and verify that `deffai-db` is healthy. Commands should be run
+through `bin/runner`, which uses the container hostname and environment expected by
+the project.
+
+### A semantic stage is `not_run`
+
+Confirm that `KG_RUN_REAL_MODELS=true` is present in `etc/secrets/.env` and that all
+three credential groups are complete. Structural success is not evidence that real
+embedding, Jev, or extraction calls ran.
+
+### Existing local data cannot migrate or import cleanly
+
+Do not rewrite immutable rows to force a migration. A database populated by an old,
+uncommitted implementation can contain state that no released migration produced.
+Preserve it for investigation and verify the current code against a separately
+named, freshly migrated database.
+
+## Further documentation
+
+- [Knowledge graph generation and operation](kg-generation.md) — detailed runtime,
+  safety, versioning, and export contracts.
+- [Question-independent extraction review](kg-extraction-review.md) — extraction and
+  alias-review procedure.
+- [Knowledge graph glossary](kg-glossary.md) — project terminology.
+- [Corpus documentation](../corpus/README.md) — supplied source inventory and
+  normalization notes.
+- [Fixture documentation](../fixtures/README.md) — behavior cases and fixture
+  execution.
