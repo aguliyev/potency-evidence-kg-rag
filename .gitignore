@@ -6,3 +6,5 @@ __pycache__/
 !/etc/secrets/.env.example
 .venv/
 graphify-out
+notebooks/.ipynb_checkpoints
+.ipynb_checkpoints
