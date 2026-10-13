@@ -264,6 +264,49 @@ bin/runner python -m potency_kg.cli discover-aliases-llm \
   --config configs/casgevy-potency.json
 ```
 
+#### Why alias curation is the main recall and quality lever
+
+Alias coverage is the single largest factor in the recall and overall quality of
+the knowledge graph. Product and Assay mentions are resolved exclusively through
+exact normalized matches against the approved scoped alias catalog, and the
+extraction input is built from that same catalog snapshot. Every synonym missing
+from the catalog — `CTX001`, `exa-cel`, `VX-290` for CASGEVY, for example —
+splits one real-world entity into several graph nodes or misses its mentions
+entirely. Pending, rejected, cross-type, or merely similar aliases never merge
+entities, so unreviewed candidates do not help until a human approves them.
+
+Candidates come from two generators:
+
+- **Deterministic rules** (`document-alias-patterns`,
+  `document-alias-patterns-v1` in `lib/potency_kg/alias_discovery.py`) scan each
+  active passage for explicit synonym patterns: parenthetical forms in both
+  directions (`exagamglogene autotemcel (exa-cel)`, `lovotibeglogene autotemcel
+  (lovo-cel)`) and explicit phrases (`also known as`, `abbreviated as`,
+  `formerly called`). Pairs pass an acronym check — the
+  short form must be an ordered letter-subsequence of the long form — before
+  they are stored as `deterministic_rule` evidence.
+- **Document-wide LLM discovery** (`structured-document-alias-discovery`,
+  `structured-document-alias-discovery-v1`) sends windows of a document's
+  passages to a structured provider and grounds every proposal back to an exact
+  quote in its original passage before anything is written. These proposals are
+  stored as `llm_mined` evidence with per-proposal confidence. They carry no
+  `canonical_key`, so approving them always requires a human to supply the full
+  Product or Assay target.
+
+Human curation is therefore mandatory, not optional: a reviewer inspects each
+candidate's evidence quotes (`notebooks/03_review_aliases.ipynb`, or
+`list-alias-evidence` / `review-alias` on the CLI) and approves it into a
+canonical target such as `Product/casgevy/CASGEVY`. Approval is what tells the
+graph that `CTX001`, `exa-cel`, and `CASGEVY` are the same entity, and each
+decision is audited with reviewer identity. Only one row per
+`(entity_type, normalized_alias)` can be approved, so competing proposals for
+the same synonym must be resolved to a single winner.
+
+One way to reduce the human workload would be semantic pre-checking of
+candidates — comparing alias and proposal embeddings, or running NER over the
+supporting quotes to confirm both forms denote the same entity — but that is
+out of scope for this project stage. Review stays explicit and human-driven.
+
 ### 5. Embeddings and index snapshot
 
 The embedding stage generates or reuses 3072-dimensional vectors for active
