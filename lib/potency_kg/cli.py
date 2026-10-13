@@ -415,10 +415,14 @@ def clear_materializations(engine: Engine, scope: Scope) -> dict[str, int]:
     counts: dict[str, int] = {}
     with engine.begin() as c:
         for table, extra in [
-            ("kg_edge_source_ref",  ""),
+            # Keep structural refs (document/passage nodes, contains_passage edges).
+            ("kg_edge_source_ref",  "AND edge_id IN (SELECT edge_id FROM kg_edge WHERE "
+                                    "tenant_id=:tenant AND project_id=:project AND is_evidence=true)"),
             ("kg_edge",             "AND is_evidence=true"),
             ("kg_node_mention_ref", ""),
-            ("kg_node_source_ref",  ""),
+            ("kg_node_source_ref",  "AND node_id NOT IN (SELECT node_id FROM kg_node WHERE "
+                                    "tenant_id=:tenant AND project_id=:project "
+                                    "AND node_type IN ('SourceDocument','SourcePassage'))"),
             ("entity_mention",      ""),
             ("redaction_mention",   ""),
             # alias_evidence rows written by materialization carry extraction_run_id;
