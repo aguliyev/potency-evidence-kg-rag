@@ -32,8 +32,22 @@ def test_graph_score_adds_hop_and_edge_bonus() -> None:
         {"traversal": "age"},  # default 3 hops exceeds the AGE cap
         {"edge_type_bonus": (("a", 0.1), ("a", 0.2))},
         {"similarity_weight": 0.0},
+        {"seed_vector_hits": 9},  # more than vector_hits
+        {"direction": "up"},
+        {"traversal": "age", "max_hops": 2, "hop_bonus": (0.05, 0.03), "direction": "out"},
+        {"max_passages_per_document": 0},
+        {"graph_min_cosine": 2.0},
+        {"context_order": "random"},
     ],
 )
 def test_invalid_configuration_is_rejected(kwargs: dict) -> None:
     with pytest.raises(ValueError):
         HybridRetrievalConfig(**kwargs)
+
+
+def test_every_field_is_in_the_trace_dict() -> None:
+    """A tunable that is missing from the trace would make runs irreproducible."""
+    from dataclasses import fields
+
+    config = HybridRetrievalConfig()
+    assert {f.name for f in fields(config)} == set(config.as_dict())
