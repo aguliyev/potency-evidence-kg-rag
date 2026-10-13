@@ -10,7 +10,7 @@ from hashlib import sha256
 from typing import Annotated, Literal, Union
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, model_validator
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -33,6 +33,27 @@ from .redactions import (
 
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class _MeasuredAttributeBase(_StrictModel):
+    """Coerce model-hallucinated field names to 'name' before strict validation runs.
+
+    The model sometimes omits 'name' entirely and uses 'note' (synonym), or leaves
+    the measurement label only in 'supporting_quote'.  Both are recovered here.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_name(cls, v: object) -> object:
+        if not isinstance(v, dict) or "name" in v:
+            return v
+        v = dict(v)
+        if "note" in v:
+            v["name"] = v.pop("note")
+        elif "supporting_quote" in v:
+            # model omitted name entirely; the quoted text is the measurement label
+            v["name"] = v["supporting_quote"]
+        return v
 
 
 class AssertionRecord(_StrictModel):
@@ -101,6 +122,7 @@ def selected_entity_types(selected_bundles: Iterable[str]) -> tuple[str, ...]:
 
 
 def _entity_model(entity_type: str) -> type[BaseModel]:
+    base = _MeasuredAttributeBase if entity_type == "MeasuredAttribute" else _StrictModel
     base_fields: dict[str, tuple[object, object]] = {
         "type": (Literal[entity_type], entity_type),
         "local_id": (str, ...),
@@ -108,7 +130,7 @@ def _entity_model(entity_type: str) -> type[BaseModel]:
     if entity_type != "RedactionMention":
         base_fields.update({"supporting_quote": (str, ...), "occurrence_index": (int | None, None)})
     base_fields.update(_ENTITY_FIELDS[entity_type])
-    return create_model(f"{entity_type}Extraction", __base__=_StrictModel, **base_fields)
+    return create_model(f"{entity_type}Extraction", __base__=base, **base_fields)
 
 
 def build_response_model(selected_bundles: Iterable[str]) -> type[BaseModel]:
