@@ -1,6 +1,6 @@
 # Retrieval, Answering and Fixture Runs Implementation Plan
 
-> For agentic workers: use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use `- [ ]` checkboxes. Status: draft v4, not yet executed.
+> For agentic workers: use superpowers:subagent-driven-development or superpowers:executing-plans. Steps use `- [ ]` checkboxes. Status: draft v5, not yet executed.
 
 **Goal:** Produce the required answer/trace artifacts (assignment items 3 and 3a): `vector` and `graph` retrieval over the existing store, bounded context building, citation-validated generation, a driver for the 6 questions, and real-model runs of the supplied fixtures (correction, conflict, isolation).
 
@@ -12,7 +12,7 @@
 - Every question runs in BOTH modes (12 runs). The required seven records are P3 (both modes) plus P1/P2/P4/P5/P6 in `graph` mode. The five extra `vector` runs go to a separate directory.
 - The LLM returns JSON; quotes are validated locally as exact substrings of the evidence actually sent.
 - The context truncates the last passage to fit. The character budget is an argument. P3 uses 6000 in both modes (`--max-chars`, the assignment cap). P1/P2/P4/P5/P6 are not capped by the assignment and use a larger default of 16000 (`--max-chars-other`), identical in vector and graph mode. Both values are recorded in every trace.
-- Graph traversal: measure first on real vector hits, start with the existing AGE traversal plus hub skipping, and move to a small own SQL traversal over `kg_edge` only if the measurement shows noise.
+- Graph traversal: measure first on real vector hits and compare only two variants: A (existing AGE traversal plus hub skipping) and D (similarity-pruned beam, own SQL). D is preferred; A is the fallback if D is too complex to finish in time. Hubs are detected generically by degree (above 20 edges), never by product name or question ID.
 - Execution is staged. Stage 1 = Tasks 0-4 and 6 (main answers). Stage 2 = Task 5 (fixtures), only after Stage 1 is verified.
 - Fixtures use `graph` mode, with the same mode before and after the correction. They are graded deliverables (real-model runs), not only tests.
 - No reset of the DB. The main scope `public-fda/casgevy-potency` is read-only for this plan. Verified: it is the only scope in the DB.
@@ -38,13 +38,15 @@ No new LLM client is needed: pass a Pydantic `AnswerModel` to `extract`.
 - **Traversal is unranked and structural:** `bounded_graph_traversal` returns node and edge IDs without hop info. Its adjacent-edge query is `ORDER BY edge.logical_id LIMIT n` with no relevance order, and it also follows structural edges (`contains_passage`) and `SourceDocument` nodes. Collecting passages from those would pull in arbitrary passages of a document. Graph passages must therefore come only from evidence edges and semantic nodes, and be ranked by query similarity.
 - **The graph is a star around one hub (measured on `results/kg/current/graph/`):** one canonical `Product` node has 456 edges; no other non-document node has more than 4. About 880 of the 1,979 `Assertion` nodes are leaves with an `applies_to` edge to `Product`/`Application`/`Indication`. `_semantic_seed_candidates` takes any non-document node referencing a hit passage (ordered by node ID), so the hub can become a seed, and one hop from it reaches 456 assertions, of which an arbitrary 50 survive the edge limit.
 - **Potency edges are sparse:** `proposed_in` 1, `requested_in` 1, `revised_by` 0, `used_as` 6, `measures` 68, `concluded_in` 87. `Assay` and `PotencyStrategy` nodes are all labelled just with their type. P3 graph mode may add little over vector mode; that is an acceptable, reportable result, not something to hide.
-- **Limits:** the smoke maxima (8 hits, 8 seeds, 2 hops, 30 nodes, 50 edges) are kept as defaults and recorded in every trace.
+- **Limits:** the existing AGE function keeps its smoke maxima (8 hits, 8 seeds, 2 hops, 30 nodes, 50 edges). Variant D has its own declared parameters (see 1b). All of them are recorded in every trace.
 - **Model-reproduced IDs are fragile:** passage IDs are long (`casgevy-125785-analytical-method-review:page-0001-c01`). The model cites short tags `S1..Sn`, which code maps back to passage IDs.
 
 ## File map
 
-- Modify `lib/potency_kg/age_projection.py`: have `bounded_graph_traversal` also return `node_hops` and `edge_hops` (the hop at which each was reached; 0 for roots). Keep existing fields so current callers and tests still pass.
-- Modify `lib/potency_kg/retrieval.py`: add `graph_passages(...)` and `retrieve(...)`. Keep `retrieve_graph_smoke` as a thin wrapper.
+- Modify `lib/potency_kg/age_projection.py` ONLY if variant A is chosen: return `node_hops`/`edge_hops` from `bounded_graph_traversal` (keep existing fields so current callers and tests still pass).
+- Create `lib/potency_kg/graph_retrieval.py`: variant D (beam traversal in SQL, one query per hop) and the passage-score helper. Pgvector cosine against the index's `embedding_run` vectors; every query filters by tenant/project and joins `index_member` for the bound `index_version`, so only current, embedded passages can be returned.
+- Create `lib/potency_kg/retrieval_params.py`: frozen constants for N, hops, edge-type bonus, seed cap, hub degree cap, `graph_share`, default budgets, prompt version. A hash of it goes into every trace.
+- Modify `lib/potency_kg/retrieval.py`: add `retrieve(...)` (vector and graph modes). Keep `retrieve_graph_smoke` as a thin wrapper.
 - Create `lib/potency_kg/answering.py`: `merge_candidates`, `build_context`, `AnswerModel`, `validate_citations`, `answer_question`, record builders, `run_questions`.
 - Modify `lib/potency_kg/cli.py`: add subcommands `answer` and `run-fixture-answers`.
 - Modify `lib/potency_kg/fixture_runs.py`: allow real clients (gated), and add an `on_stage` callback.
@@ -59,27 +61,30 @@ No new LLM client is needed: pass a Pydantic `AnswerModel` to `extract`.
 
 ## Task 1: graph-selected passages in retrieval
 
-- [ ] **1a. Measure first (read-only, 6 real query embeddings).** For each question, take the real vector hits and report: the seeds chosen, whether the hub is a seed, the number and types of traversed nodes/edges, and how many NON-vector passages the traversal would add (with and without hub skipping). Save to `docs/graph-signal-measurement.md`. Decision gate: if hub skipping (skip as seed or expansion point any node with degree above 20, plus `Product`/`Application`/`Indication`) still yields mostly irrelevant passages, replace the traversal with a small SQL traversal over `kg_edge` with an edge-type priority (`proposed_in`, `requested_in`, `revised_by`, `concluded_in`, `measures`, `used_as`, `cites`, `supported_by` first). Do not choose the rule after looking at the P3 answers.
-- [ ] **1a variants to measure** (same hits, same questions; the choice rule is fixed now, before any P3 answer is seen): **A** existing AGE traversal plus hub skipping; **B** own SQL neighborhood over `kg_edge` (1-2 hops, hub skipping, edge-type priority, candidate cap about 500 passages); **C** = B, then top N graph passages by cosine similarity to the query; **D (preferred candidate)** similarity-pruned beam: from the seeds, for every frontier entity keep its top `N` neighbors (default `N=5`) ranked by (cosine similarity of the neighbor's best cited passage to the QUESTION + a small declared bonus for potency edge types `proposed_in`, `requested_in`, `revised_by`, `concluded_in`, `measures`, `used_as`), repeat for up to 3 hops (at most N+N^2+N^3 entities), then rank all collected entities by their best passage similarity. One SQL query per hop (`ROW_NUMBER() OVER (PARTITION BY frontier_node ORDER BY score DESC) <= N`) over `kg_edge`, `kg_node_source_ref`/`kg_edge_source_ref` (evidence edges only) and the index embeddings; `SourceDocument`/`SourcePassage` nodes excluded. Only passages are embedded, so entity score = score of its best cited passage; dedup passages across hops. Pick the simplest variant whose added passages are mostly relevant on the 6 questions. If a variant's candidates mostly come through the Product hub, it is effectively filtered vector search; report that rather than counting it as graph value.
-- [ ] **Hub accounting.** Per hop, record in the trace: relations available for each expanded entity, relations kept (N), and whether the entity or edge went through the hub. The report states how much of the graph contribution is hub-mediated.
-- [ ] **1b. Declare the traversal (assignment requirement).** Undirected; a hop is one edge from the current frontier; seeds are semantic (non-document, non-passage) nodes referencing the vector-hit passages (hub excluded as a seed); parameters (8 vector hits, 8 seeds, `N=5` per entity, 3 hops, edge-type bonus value, candidate cap) are written to the trace and `docs/`. Variant D is not limited by the AGE maxima, so `RetrievalLimits` gets its own hop/N fields and the smoke maxima stay for the old function.
+- [ ] **1a. Measure first (read-only, 6 real query embeddings; throwaway script, output saved to `docs/graph-signal-measurement.md`).** Compare A and D on the same real vector hits for the 6 questions. The choice rule is fixed now, before any P3 answer is seen: pick D unless its graph-only passages are mostly irrelevant on manual inspection; then pick A if A is better; if both are mostly irrelevant, ship D anyway and report that the graph added little.
+  - **A**: existing AGE traversal with hub skipping (a node with degree above 20 is never a seed or an expansion point).
+  - **D (preferred)**: similarity-pruned beam. Seeds: up to 8 non-hub, non-document, non-passage nodes referencing the vector-hit passages, ordered by their hit's vector score, then node ID. For every frontier entity keep its top `N=5` neighbors, ranked by (cosine similarity of the neighbor's best cited passage to the QUESTION + a declared bonus of `+0.05` for potency edge types `proposed_in`, `requested_in`, `revised_by`, `concluded_in`, `measures`, `used_as`). Repeat for up to 3 hops (at most N+N^2+N^3 entities). One SQL query per hop (`ROW_NUMBER() OVER (PARTITION BY frontier_node ORDER BY score DESC) <= N`) over `kg_edge`, `kg_node_source_ref`/`kg_edge_source_ref` (evidence edges only) and the index embeddings; `SourceDocument`/`SourcePassage` nodes excluded. Entity score = score of its best cited passage; dedup passages across hops; final candidate list sorted by score.
+  - Report per question: seeds, hub involvement, entities visited per hop, and how many NON-vector passages each variant adds. If candidates mostly come through the hub, say the variant is effectively filtered vector search.
+- [ ] **Hub accounting.** Per hop, record in the trace: relations available for each expanded entity, relations kept (N), and whether the entity or edge went through a hub. The report states how much of the graph contribution is hub-mediated.
+- [ ] **1b. Declare the traversal (assignment requirement).** Undirected; a hop is one edge from the current frontier; parameters (8 vector hits, 8 seeds, `N=5`, 3 hops, bonus `0.05`, hub degree cap 20, candidate cap) live in `retrieval_params.py`, are written to the trace and described in `docs/`.
 - [ ] Write the failing integration test (pattern: `tests/integration/test_retrieval_smoke.py`). Scope with passage A as a vector hit linked to a semantic node N; an evidence edge from N whose source-ref passage is B, and B is NOT a vector hit. Assert:
   - `retrieve(mode="graph")` returns B with `selected_via="graph"`; `mode="vector"` does not.
   - A structural `contains_passage` edge or a `SourceDocument` node never yields passages (add a passage C that is only reachable that way and assert it is absent).
   - A second scope with identical IDs never appears.
-- [ ] Extend `bounded_graph_traversal` to return `node_hops` / `edge_hops`.
-- [ ] Implement `graph_passages(connection, scope, node_ids, edge_ids, hops)`: join `kg_node_source_ref` (excluding `SourceDocument`/`SourcePassage` nodes) and `kg_edge_source_ref` (evidence edges only, `is_evidence`) to `source_passage`; return key, text, text_sha256, locator, min hop, and the via node/edge ID.
+  - A passage whose source version is not in the bound index (superseded or not embedded) is never returned, even if a stale node or edge refers to it.
+- [ ] Only if A is chosen: extend `bounded_graph_traversal` to return `node_hops` / `edge_hops`.
+- [ ] Implement the chosen variant. For D it returns candidates (key, text, text_sha256, locator, score, hop, via node/edge ID, hub flag). For A, a `graph_passages(connection, scope, node_ids, edge_ids, hops)` helper joins the node/edge source refs (non-structural nodes, evidence edges only) to `source_passage` and to `index_member` for the bound index.
 - [ ] Implement `retrieve(engine, scope, question, mode, embedding_client, index_version, limits, query_embedding=None)`:
   - Optional precomputed `query_embedding`, so one question embedded once serves both modes. This also guarantees identical vector seeds for the comparison.
   - `vector`: vector search, load passages. No graph work.
-  - `graph`: the traversal variant chosen in 1a (default D), then collect passages via `graph_passages`; if A is chosen, the existing flow plus `graph_passages`. Query similarity for graph-only passages is computed in SQL against `embedding_run` (same cosine as `vector_search`), so every candidate has a score.
+  - `graph`: the variant chosen in 1a (default D). Every graph candidate carries a query-similarity score from pgvector, so all candidates are comparable with vector hits.
   - Return a `RetrievalResult` with the original trace fields plus `candidates[]`: key, `document_id` (source_id), `selected_via` in {vector, graph, both}, score, hop, via IDs.
 - [ ] Run the new test and `tests/integration/test_retrieval_smoke.py`; commit.
 
 ## Task 2: merging and context building (pure functions)
 
 - [ ] Unit tests first:
-  - `merge_candidates(mode, max_chars, graph_share=0.4)`: vector mode returns hits by score. Graph mode adds vector hits in rank order until they use `(1-graph_share)*max_chars`, then graph-only passages in rank order until the budget is full (the last one truncated); if graph-only passages run out, the remaining budget goes back to the unused vector hits. Dedups by passage key and marks a passage found by both as `both`. Deterministic. Both modes get the same total budget.
+  - `merge_candidates(mode, max_chars, graph_share=0.4)`: vector mode returns hits by score. Graph mode adds vector hits in rank order until they use `(1-graph_share)*max_chars`, then graph-only passages in rank order until the budget is full (the last one truncated); if graph-only passages run out, the remaining budget goes back to the unused vector hits. Dedup by passage key; a passage found by both is `both`. Deterministic. Both modes get the same total budget. The reserved share is forced: there is NO similarity floor for graph-only passages (decided; see Risks).
   - `build_context(candidates, max_chars=6000)`:
     - Block format: `[S1] source_id | source_version | page/section | passage_id` plus the exact text.
     - `len(evidence_text)` in Unicode code points is `<= max_chars`, including headers and separators.
@@ -93,7 +98,7 @@ No new LLM client is needed: pass a Pydantic `AnswerModel` to `extract`.
 
 - [ ] Unit tests with a fake `extract` client:
   - Valid answer passes.
-  - A quote that is not a substring of the SENT text of the cited tag fails. A quote that exists only in the truncated-away part of the passage also fails.
+  - A quote that is not a substring of the SENT text of the cited tag fails. Matching is exact first; if that fails, whitespace-collapsed matching on both sides is accepted and flagged `match="normalized"` in the citation record (passages come from PDFs and contain line breaks and form feeds). A quote that exists only in the truncated-away part of the passage also fails.
   - A tag not in the context fails.
   - After one repair retry that also fails, the record is saved with `citation_check.status="failed"`, never silently fixed.
   - Empty evidence yields an answer saying nothing was found in the inspected scope.
@@ -115,6 +120,7 @@ No new LLM client is needed: pass a Pydantic `AnswerModel` to `extract`.
 - [ ] Field semantics:
   - `selected_passage_ids` = passages actually sent to the model. `candidate_passage_ids` = everything retrieved before the budget (kept separately).
   - Also: `document_ids`, `selected_via` per passage, `seed_node_ids`, `node_ids`, `traversed_edge_ids`, `hops`, `traversal_limits`, `max_evidence_chars`, `truncated`, `dropped`, `prompt_version`, `retriever_version`, `model`, `usage`, `attempts`, `elapsed_ms`, `citation_check`, `index_version`, `graph_version`, `corpus_snapshot` (from the config).
+- [ ] **Freeze before the first real run.** Commit `retrieval_params.py` and the prompt, then run. The trace carries the params hash and git commit. Any change after seeing P3 answers is disclosed in the comparison note and the run is repeated for both modes.
 - [ ] CLI: `python -m potency_kg.cli answer --config configs/casgevy-potency.json --output results [--max-chars 6000] [--max-chars-other 16000]`.
   - Reads `questions.json`; embeds each question once; runs vector and graph with the same budget and prompt (6000 for P3, 16000 for the rest). Gates on `KG_RUN_REAL_MODELS`.
   - `results/answers.jsonl`, `results/traces.jsonl`: required seven (P3 both modes; the others `graph`).
@@ -148,13 +154,15 @@ No new LLM client is needed: pass a Pydantic `AnswerModel` to `extract`.
   - P3 `evidence_text` lengths per mode.
   - Every `passage_id`, node ID and edge ID in a trace resolves in the DB and in `results/kg/current/graph/*.jsonl`.
   - No secrets in outputs (`rg` for key names and values from the secrets `.env`).
+- [ ] Map the assignment's automated-check list to tests: unchanged re-import after restart (`test_import.py`, `test_embeddings.py`), exact citation text and version (new, Task 3/4), isolation containment (`test_behavior_graphs.py` plus Task 5), valid graph endpoints/traversals (`test_age_refresh.py`, `test_exports.py`, new traversal test), correction and conflict (Task 5), repeatable evaluation (later plan). Note which are offline test-double checks and which real runs.
 - [ ] Write the P3 vector vs graph comparison note (observed contribution or failure) in `docs/`.
 - [ ] `graphify update .`.
 
 ## Risks and open items
 
 - **Budget vs recall:** with about 3 passages per P3 answer, P3 graph and vector may end up with the same evidence. Report that honestly; do not tune the merge after seeing P3 answers, beyond what is written here (any change must be disclosed).
-- **Hub and sparse potency edges:** see Design facts. Mitigations: hub skipping, similarity ranking of graph passages, the measurement gate in 1a. If graph passages are still mostly irrelevant, say so in the comparison note.
+- **Hub and sparse potency edges:** see Design facts. Mitigations: degree-based hub skipping, similarity-pruned beam, the measurement gate in 1a. The bonus (`+0.05`) only matters where potency edges exist, which is rare. If graph passages are still mostly irrelevant, say so in the comparison note.
+- **Forced graph share without a floor (decided: no floor):** graph-only passages are by definition below the vector top-8, so they may be weakly relevant. A forced 40% share can lower the graph-mode answer quality. That is a legitimate finding, but it is a design choice the comparison note must state. A declared floor was considered and rejected because it can make graph mode identical to vector mode.
 - **Hours:** the assignment budgets about 1 hour for retrieval/answers/P3. Stage 1 fits that only if the traversal decision is quick; if the gate in 1a forces an own traversal, say so in the time log.
 - **Quote validation:** the model may paraphrase. One repair retry is recorded. If many still fail, add a declared whitespace/hyphenation normalization rather than fuzzy matching.
 - **Determinism:** `extract` exposes no temperature or seed, so reruns may differ. Saved traces, not reruns, are the record.
@@ -171,3 +179,4 @@ No new LLM client is needed: pass a Pydantic `AnswerModel` to `extract`.
 - Added the isolation fixture to the real fixture run, with a containment check.
 - v3: hub/sparse-edge findings, measurement gate and declared traversal (1a/1b), split budgets (6000 for P3, 16000 for the rest), staged execution, retry-feedback accounting, reconnect check.
 - v4: beam traversal (variant D) with question-similarity scoring plus edge-type bonus, best-passage entity score, hub accounting in the trace, and a reserved graph share (0.4) instead of round-robin.
+- v5: removed contradictions (decisions vs variants, duplicated gate), cut variants B and C (subsumed by D), fixed bonus `+0.05`, hub defined by degree, seeds ordered by hit score, graph candidates restricted to the bound index, whitespace-normalized quote matching, frozen params with hash in the trace, automated-check mapping, AGE changes only if A is chosen.
