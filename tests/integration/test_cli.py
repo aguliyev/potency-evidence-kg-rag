@@ -388,6 +388,18 @@ def test_notebooks_are_declarative_sanitized_and_smoke_is_explicitly_gated() -> 
     assert all(not cell.get("outputs") for notebook in (build, inspect) for cell in notebook["cells"] if cell["cell_type"] == "code")
 
 
+def test_alias_review_notebook_has_conservative_high_confidence_bulk_approval() -> None:
+    """Bulk approval must remain preview-first and refuse incomplete targets."""
+    review = json.loads((PACKAGE_ROOT / "notebooks/03_review_aliases.ipynb").read_text())
+    review_code = "\n".join("".join(cell.get("source", [])) for cell in review["cells"] if cell["cell_type"] == "code")
+
+    assert "def approve_high_confidence_aliases" in review_code
+    assert "r.confidence > threshold" in review_code
+    assert "dry_run=True" in review_code
+    assert "missing target fields" in review_code
+    assert "review_alias(r.alias_id, \"approved\"" in review_code
+
+
 def test_runner_remains_executable() -> None:
     """Removing executable permissions from the supported operator boundary must break this test."""
     assert stat.S_IMODE((PACKAGE_ROOT / "bin/runner").stat().st_mode) & 0o111
