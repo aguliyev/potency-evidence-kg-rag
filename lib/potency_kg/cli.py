@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .age_projection import refresh_graph
-from .aliases import AliasDecision, approved_alias_catalog
+from .aliases import AliasDecision
 from .contracts import Scope, ScopedPassageIdentity
 from .db import create_engine_from_env
 from .embedding_client import (
@@ -284,19 +284,6 @@ def _pending_materializations(
     engine: Engine, scope: Scope
 ) -> list[tuple[ScopedPassageIdentity, UUID]]:
     with engine.connect() as connection:
-        current_catalog = approved_alias_catalog(connection, scope)
-        current_catalog_entries = [
-            {
-                "alias_id": entry.alias_id,
-                "alias_value": entry.alias_value,
-                "normalized_alias": entry.normalized_alias,
-                "entity_type": entry.entity_type,
-                "canonical_key": entry.canonical_key,
-                "canonical_name": entry.canonical_name,
-                "normalization_version": entry.normalization_version,
-            }
-            for entry in current_catalog.entries
-        ]
         rows = list(
             connection.execute(
                 text("""
@@ -368,8 +355,6 @@ def _pending_materializations(
             row["prompt_hash"] == prompt_hash
             and row["schema_hash"] == schema_hash
             and row["extraction_version"] == expected_version
-            and row["alias_catalog_version"] == current_catalog.version
-            and list(row["profile_aliases"] or []) == current_catalog_entries
         ):
             current_rows.append(row)
     return [

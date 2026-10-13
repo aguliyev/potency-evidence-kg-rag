@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import potency_kg.cli as cli_module
 import pytest
-from potency_kg.aliases import AliasCatalog, approved_alias_catalog, normalize_alias
+from potency_kg.aliases import ApprovedAlias, AliasCatalog, approved_alias_catalog, normalize_alias
 from potency_kg.contracts import Scope, ScopedPassageIdentity
 from potency_kg.extraction import build_response_model
 from potency_kg.ids import canonical_json, derive_extraction_version, derive_scoped_id
@@ -408,10 +408,10 @@ def test_materialization_rejects_candidate_with_stale_normalization(db_engine) -
         materialize_extraction(db_engine, PASSAGE, candidate)
 
 
-def test_materialization_rejects_catalog_snapshot_after_alias_approval(
+def test_materialization_replays_with_new_alias_catalog_without_reextract(
     db_engine,
 ) -> None:
-    """Approving an alias after extraction must require Jev and extraction to rerun."""
+    """Approved aliases may change resolution without invalidating the extraction response."""
     _previous, candidate = _seed_passage(db_engine)
     with db_engine.begin() as connection:
         connection.execute(
@@ -437,21 +437,41 @@ def test_materialization_rejects_catalog_snapshot_after_alias_approval(
                     decided_at,decided_by)
                    VALUES (:tenant,:project,'approved-after-extraction','CGV-X','cgv-x',
                     'Product','casgevy','CASGEVY','approved','review',
+                   'nfkc-casefold-whitespace-v1',now(),'reviewer')"""),
+            {"tenant": SCOPE.tenant_id, "project": SCOPE.project_id},
+        )
+        connection.execute(
+            text("""INSERT INTO aliases
+                   (tenant_id,project_id,alias_id,alias_value,normalized_alias,entity_type,
+                    canonical_key,canonical_name,status,managed_by,normalization_version,
+                    decided_at,decided_by)
+                   VALUES (:tenant,:project,'approved-assay-after-extraction','flow assay','flow assay',
+                    'Assay','flow','Flow assay','approved','review',
                     'nfkc-casefold-whitespace-v1',now(),'reviewer')"""),
             {"tenant": SCOPE.tenant_id, "project": SCOPE.project_id},
         )
         new_version = approved_alias_catalog(connection, SCOPE).version
 
     assert new_version != old_version
-    assert cli_module._pending_materializations(db_engine, SCOPE) == []
-    with pytest.raises(ValueError, match="active alias catalog"):
-        materialize_extraction(db_engine, PASSAGE, candidate)
+    assert cli_module._pending_materializations(db_engine, SCOPE) == [
+        (PASSAGE, candidate)
+    ]
+    report = materialize_extraction(db_engine, PASSAGE, candidate)
+    assert report.extraction_run_id == candidate
+    with db_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT count(*) FROM kg_node WHERE node_id=:node_id"),
+            {"node_id": derive_scoped_id("entity", SCOPE, "Assay", "flow")},
+        ).scalar_one() == 1
+        assert connection.execute(
+            text("SELECT resolution_alias_catalog_version FROM materialization_run")
+        ).scalar_one() == new_version
 
 
-def test_materialization_rejects_catalog_entries_that_do_not_match_live_snapshot(
+def test_materialization_replays_against_current_catalog_not_historical_snapshot(
     db_engine,
 ) -> None:
-    """A matching digest label cannot substitute for the exact ordered catalog entries."""
+    """A historical extraction snapshot does not block current-catalog materialization."""
     _previous, candidate = _seed_passage(db_engine)
     with db_engine.begin() as connection:
         catalog = approved_alias_catalog(connection, SCOPE)
@@ -483,9 +503,9 @@ def test_materialization_rejects_catalog_entries_that_do_not_match_live_snapshot
             )
         )
 
-    assert cli_module._pending_materializations(db_engine, SCOPE) == []
-    with pytest.raises(ValueError, match="active alias catalog"):
-        materialize_extraction(db_engine, PASSAGE, candidate)
+    assert cli_module._pending_materializations(db_engine, SCOPE) == [(PASSAGE, candidate)]
+    report = materialize_extraction(db_engine, PASSAGE, candidate)
+    assert report.extraction_run_id == candidate
 
 
 def test_materialization_rejects_self_consistent_stale_prompt_and_schema(
@@ -631,6 +651,66 @@ def test_resolution_uses_only_exact_approved_typed_catalog_mappings(db_engine) -
     assert all(
         item.matched_by == "new_entity"
         for item in (pending, rejected, similar, wrong_type)
+    )
+
+
+def test_resolution_merges_equal_normalized_names_across_mentions(db_engine) -> None:
+    """Unmapped mentions with the same typed normalized name share one entity node."""
+    catalog = AliasCatalog(SCOPE, "empty-catalog", ())
+    with db_engine.begin() as connection:
+        first = resolve_mention(
+            connection,
+            SCOPE,
+            EntityMentionDraft("first", "Product", "New Product", PASSAGE, "New Product"),
+            catalog,
+        )
+        second = resolve_mention(
+            connection,
+            SCOPE,
+            EntityMentionDraft("second", "Product", " new   product ", PASSAGE, " new   product "),
+            catalog,
+        )
+        node_count = connection.execute(
+            text("SELECT count(*) FROM kg_node WHERE node_type='Product'")
+        ).scalar_one()
+
+    assert first.node_id == second.node_id
+    assert first.canonical_key == second.canonical_key == "new product"
+    assert node_count == 1
+
+
+def test_resolution_merges_an_approved_canonical_name_to_its_alias_target(db_engine) -> None:
+    """An approved canonical name resolves to the same target as its approved aliases."""
+    catalog = AliasCatalog(
+        SCOPE,
+        "catalog-v1",
+        (
+            ApprovedAlias(
+                "alias-product",
+                "product shorthand",
+                "product shorthand",
+                "Product",
+                "canonical-product",
+                "Canonical Product",
+                "nfkc-casefold-whitespace-v1",
+            ),
+        ),
+    )
+    with db_engine.begin() as connection:
+        resolved = resolve_mention(
+            connection,
+            SCOPE,
+            EntityMentionDraft("canonical", "Product", " canonical   product ", PASSAGE, "canonical product"),
+            catalog,
+        )
+
+    assert resolved.node_id == derive_scoped_id(
+        "entity", SCOPE, "Product", "canonical-product"
+    )
+    assert (resolved.canonical_key, resolved.canonical_name, resolved.matched_by) == (
+        "canonical-product",
+        "Canonical Product",
+        "approved_alias",
     )
 
 

@@ -167,20 +167,35 @@ def resolve_mention(
     mention: EntityMentionDraft,
     catalog: AliasCatalog,
 ) -> ResolvedEntity:
-    """Resolve exact approved typed aliases; never similarity-merge extracted text."""
+    """Resolve approved aliases, canonical names, or deterministic normalized names."""
     if mention.source_ref.scope != scope or catalog.scope != scope:
         raise ValueError(
             "entity resolution requires matching full tenant/project scope"
         )
-    match = next(
-        (
+    normalized_name = normalize_alias(mention.text)
+    alias_matches = tuple(
+        entry
+        for entry in catalog.entries
+        if entry.entity_type == mention.entity_type
+        and entry.normalized_alias == normalized_name
+    )
+    match = alias_matches[0] if len(alias_matches) == 1 else None
+    if match is None and alias_matches:
+        alias_targets = {(entry.entity_type, entry.canonical_key) for entry in alias_matches}
+        if len(alias_targets) == 1:
+            match = alias_matches[0]
+    if match is None:
+        canonical_matches = tuple(
             entry
             for entry in catalog.entries
             if entry.entity_type == mention.entity_type
-            and entry.normalized_alias == normalize_alias(mention.text)
-        ),
-        None,
-    )
+            and normalize_alias(entry.canonical_name) == normalized_name
+        )
+        canonical_targets = {
+            (entry.entity_type, entry.canonical_key) for entry in canonical_matches
+        }
+        if len(canonical_targets) == 1:
+            match = canonical_matches[0]
     if match is not None:
         node_id = derive_scoped_id(
             "entity", scope, match.entity_type, match.canonical_key
@@ -219,14 +234,12 @@ def resolve_mention(
         "entity",
         scope,
         mention.entity_type,
-        mention.source_ref.source_id,
-        mention.source_ref.source_version,
-        mention.source_ref.passage_id,
-        str(mention.extraction_run_id or "unmaterialized"),
-        mention.local_id,
+        normalized_name,
     )
     attributes = {
         "canonical_name": mention.text,
+        "canonical_key": normalized_name,
+        "normalized_name": normalized_name,
         "extraction_run_id": (
             str(mention.extraction_run_id) if mention.extraction_run_id else None
         ),
@@ -394,21 +407,25 @@ def _record_failed_materialization(
     passage: ScopedPassageIdentity,
     extraction_run_id: UUID,
     previous: UUID | None,
+    resolution_alias_catalog_version: str | None,
 ) -> None:
     with engine.begin() as connection:
         connection.execute(
             text(
                 """INSERT INTO materialization_run
                    (materialization_run_id,extraction_run_id,tenant_id,project_id,source_id,
-                    source_version,passage_id,previous_active_extraction_run_id,status,error_detail,finished_at)
+                    source_version,passage_id,previous_active_extraction_run_id,
+                    resolution_alias_catalog_version,status,error_detail,finished_at)
                    VALUES (:materialization_id,:extraction_run_id,:tenant,:project,:source_id,
-                    :source_version,:passage_id,:previous,'failed','materialization transaction failed',now())"""
+                    :source_version,:passage_id,:previous,:resolution_catalog_version,
+                    'failed','materialization transaction failed',now())"""
             ),
             {
                 **_params(passage),
                 "materialization_id": materialization_run_id,
                 "extraction_run_id": extraction_run_id,
                 "previous": previous,
+                "resolution_catalog_version": resolution_alias_catalog_version,
             },
         )
 
@@ -421,7 +438,7 @@ def materialize_extraction(
     failure_at: str | None = None,
     failure_injector: Callable[[str], None] | None = None,
 ) -> MaterializationReport:
-    """Resolve and materialize one validated extraction in one pointer-owning transaction."""
+    """Materialize one immutable extraction using the current approved alias catalog."""
     allowed_failure_points = {
         "after_resolution",
         "after_assertions",
@@ -433,6 +450,7 @@ def materialize_extraction(
         raise ValueError("unknown materialization failure point")
     materialization_run_id = uuid4()
     previous: UUID | None = None
+    resolution_alias_catalog_version: str | None = None
     counts = {"mentions": 0, "alias_proposals": 0, "assertions": 0, "evidence_edges": 0}
     try:
         with engine.begin() as connection:
@@ -476,15 +494,7 @@ def materialize_extraction(
                     "extraction run does not match the active Jev selection identity"
                 )
             catalog = approved_alias_catalog(connection, passage.scope)
-            if (
-                extraction["alias_catalog_version"] != catalog.version
-                or extraction["active_alias_catalog_version"] != catalog.version
-                or list(extraction["profile_aliases"] or [])
-                != _catalog_entries(catalog)
-            ):
-                raise ValueError(
-                    "extraction run does not match the active alias catalog"
-                )
+            resolution_alias_catalog_version = catalog.version
             previous = current["active_extraction_run_id"]
             response = extraction["response"]
             if not isinstance(response, dict):
@@ -507,13 +517,15 @@ def materialize_extraction(
             connection.execute(
                 text("""INSERT INTO materialization_run
                        (materialization_run_id,extraction_run_id,tenant_id,project_id,source_id,
-                        source_version,passage_id,previous_active_extraction_run_id,status)
+                        source_version,passage_id,previous_active_extraction_run_id,
+                        resolution_alias_catalog_version,status)
                        VALUES (:materialization_id,:extraction_run_id,:tenant,:project,:source_id,
-                        :source_version,:passage_id,:previous,'running')"""),
+                        :source_version,:passage_id,:previous,:resolution_catalog_version,'running')"""),
                 {
                     **params,
                     "materialization_id": materialization_run_id,
                     "previous": previous,
+                    "resolution_catalog_version": resolution_alias_catalog_version,
                 },
             )
 
@@ -861,7 +873,12 @@ def materialize_extraction(
         raise
     except Exception as error:
         _record_failed_materialization(
-            engine, materialization_run_id, passage, extraction_run_id, previous
+            engine,
+            materialization_run_id,
+            passage,
+            extraction_run_id,
+            previous,
+            resolution_alias_catalog_version,
         )
         if (
             isinstance(error, RuntimeError)
