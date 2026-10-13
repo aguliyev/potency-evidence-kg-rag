@@ -4,12 +4,7 @@ from __future__ import annotations
 
 import json
 
-
-INSTRUCTIONS = (
-    "Identify only explicit Product or Assay aliases in the supplied passages. "
-    "Return every proposal with the exact passage_id and an exact supporting_quote copied "
-    "from that passage. Do not infer aliases, normalize quotes, or approve a proposal."
-)
+from ..prompts import ALIAS_DISCOVERY_INSTRUCTIONS as INSTRUCTIONS
 
 
 def assemble_prompt() -> str:

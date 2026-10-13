@@ -21,6 +21,7 @@ from typesafe_sdk import (
 
 from .processing_policy import BUNDLE_ORDER
 from .prompt_resources.jev_bundles import JEV_QUESTIONS
+from .prompts import JEV_FALSE_CRITERION
 from .settings import JevSettings, load_jev_settings
 
 
@@ -152,7 +153,7 @@ class TypeSafeJevClient:
         provider_questions = {
             question.name: Noul(
                 instructions=question.question,
-                criteria={"true": question.criteria, "false": "The criterion is not explicitly supported."},
+                criteria={"true": question.criteria, "false": JEV_FALSE_CRITERION},
             )
             for question in question_tuple
         }

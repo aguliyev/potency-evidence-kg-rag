@@ -1,4 +1,4 @@
-"""Deterministic assembly of the structured-extraction instruction."""
+"""Deterministic assembly of the structured-extraction instruction (texts live in ``potency_kg.prompts``)."""
 
 from __future__ import annotations
 
@@ -6,31 +6,32 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
+from ..contracts import ALLOWED_RELATION_ENDPOINTS
 from ..processing_policy import BUNDLE_ORDER
+from ..prompts import (  # noqa: F401 (re-exported)
+    ASSERTION_RULES,
+    ID_RULES,
+    QUOTE_RULES,
+    REDACTION_RULES,
+    RELATIONSHIP_RULES,
+    RETRY_INSTRUCTION,
+    SOURCE_REF_RULES,
+    TYPE_GUIDANCE,
+    TYPE_SCHEMAS,
+    UNIVERSAL_INSTRUCTIONS,
+)
 from .jev_bundles import BUNDLE_TO_TYPES
 
-UNIVERSAL_INSTRUCTIONS = (
-    "Extract only explicit passage-local claims. Every evidence relationship must reference "
-    "one atomic assertion and one exact supporting quote. Use passage-local IDs for all "
-    "references. Do not reconstruct, guess, or infer concealed redacted content."
-)
-RETRY_INSTRUCTION = (
-    "The previous response used a type outside the selected bundles. Return a complete "
-    "replacement response using only the emphasized allowed types."
-)
 
-TYPE_SCHEMAS: dict[str, dict[str, object]] = {
-    "Product": {"required": ("local_id", "name", "supporting_quote")},
-    "Application": {"required": ("local_id", "application_id", "supporting_quote")},
-    "Indication": {"required": ("local_id", "name", "supporting_quote")},
-    "AliasCandidate": {"required": ("local_id", "candidate", "target_local_id", "supporting_quote")},
-    "PotencyStrategy": {"required": ("local_id", "description", "supporting_quote")},
-    "Assay": {"required": ("local_id", "name", "supporting_quote")},
-    "MeasuredAttribute": {"required": ("local_id", "name", "supporting_quote")},
-    "RegulatoryInteraction": {"required": ("local_id", "chronology_state", "supporting_quote")},
-    "ReviewConclusion": {"required": ("local_id", "conclusion", "supporting_quote")},
-    "RedactionMention": {"required": ("local_id", "model_start", "model_end")},
-}
+def _relation_table(types: list[str]) -> str:
+    """Allowed relation types whose endpoints can exist in this response (derived, so it cannot drift)."""
+    available = set(types) | {"Assertion", "SourcePassage"}
+    lines = []
+    for relation, pairs in sorted(ALLOWED_RELATION_ENDPOINTS.items()):
+        usable = sorted(pair for pair in pairs if set(pair) <= available)
+        if usable:
+            lines.append(f"- {relation}: " + " | ".join(f"{source} -> {target}" for source, target in usable))
+    return "\n".join(lines)
 
 
 def assemble_prompt(selected_bundles: tuple[str, ...]) -> str:
@@ -46,14 +47,23 @@ def assemble_prompt(selected_bundles: tuple[str, ...]) -> str:
             if kind not in types:
                 types.append(kind)
     schemas = {kind: TYPE_SCHEMAS[kind] for kind in types}
-    return (
-        f"{UNIVERSAL_INSTRUCTIONS}\n"
-        f"Allowed types: {', '.join(types)}\n"
-        f"Selected type schemas: {json.dumps(schemas, sort_keys=True, separators=(',', ':'))}\n"
-        "Universal records: Assertion, SourceRef, EvidenceRelationship."
-    )
+    sections = [
+        UNIVERSAL_INSTRUCTIONS,
+        f"Allowed entity types (use no other type): {', '.join(types)}",
+        "What to extract:\n" + "\n".join(f"- {kind}: {TYPE_GUIDANCE[kind]}" for kind in types),
+        f"Selected type schemas: {json.dumps(schemas, sort_keys=True, separators=(',', ':'))}",
+        QUOTE_RULES,
+        ID_RULES,
+        ASSERTION_RULES,
+        RELATIONSHIP_RULES.format(relation_table=_relation_table(types)),
+        SOURCE_REF_RULES,
+    ]
+    if "RedactionMention" in types:
+        sections.append(REDACTION_RULES)
+    sections.append("Universal records: Assertion, SourceRef, EvidenceRelationship.")
+    return "\n\n".join(sections)
 
 
 def resource_hash() -> str:
-    bundle_path = Path(__file__).with_name("jev_bundles.py")
-    return sha256(Path(__file__).read_bytes() + b"\0" + bundle_path.read_bytes()).hexdigest()
+    parts = (Path(__file__), Path(__file__).with_name("jev_bundles.py"), Path(__file__).parent.parent / "prompts.py")
+    return sha256(b"\0".join(path.read_bytes() for path in parts)).hexdigest()
