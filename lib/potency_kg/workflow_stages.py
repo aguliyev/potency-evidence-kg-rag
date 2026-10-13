@@ -236,6 +236,11 @@ def materialize_stage(config: Path) -> object:
     return _guarded_stage(config, lambda _descriptor, scope, engine: materialize_pending_extractions(engine, scope))
 
 
+def clear_materialization_stage(config: Path) -> dict[str, int]:
+    from .cli import clear_materializations
+    return _guarded_stage(config, lambda _descriptor, scope, engine: clear_materializations(engine, scope))  # type: ignore[return-value]
+
+
 def refresh_graph_stage(config: Path, *, mode: Literal["structural", "semantic"], allow_partial: bool = False, force: bool = False) -> object:
     return _guarded_stage(config, lambda _descriptor, scope, engine: refresh_graph(engine, scope, mode, allow_partial, force))
 

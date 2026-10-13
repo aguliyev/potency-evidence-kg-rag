@@ -401,6 +401,49 @@ def materialize_pending_extractions(engine: Engine, scope: Scope) -> dict[str, o
     }
 
 
+def clear_materializations(engine: Engine, scope: Scope) -> dict[str, int]:
+    """Delete all materialization output for the scope.
+
+    Extraction tables (llm_extraction_run, validation_failure) and
+    validated_extraction_run_id pointers are left untouched, so
+    materialize_stage can replay from the stored LLM responses with no
+    new model calls.  passage_processing rows go from 'extracted' back to
+    'selected', which is the state materialize_stage expects.
+    """
+    p = {"tenant": scope.tenant_id, "project": scope.project_id}
+    sc = "tenant_id=:tenant AND project_id=:project"
+    counts: dict[str, int] = {}
+    with engine.begin() as c:
+        for table, extra in [
+            ("kg_edge_source_ref",  ""),
+            ("kg_edge",             "AND is_evidence=true"),
+            ("kg_node_mention_ref", ""),
+            ("kg_node_source_ref",  ""),
+            ("entity_mention",      ""),
+            ("redaction_mention",   ""),
+            # alias_evidence rows written by materialization carry extraction_run_id;
+            # rows from alias-discovery stages (extraction_run_id IS NULL) are preserved.
+            ("alias_evidence",      "AND extraction_run_id IS NOT NULL"),
+            ("assertion",           ""),
+            # kg_node rows with extraction_run_id in attributes are materialization-private
+            # (new_entity + Assertion nodes).  Application and approved_alias nodes lack
+            # this attribute and survive.
+            ("kg_node",             "AND attributes->>'extraction_run_id' IS NOT NULL"),
+            ("materialization_run", ""),
+        ]:
+            counts[table] = c.execute(
+                text(f"DELETE FROM {table} WHERE {sc} {extra}"), p
+            ).rowcount
+        counts["passages_reset"] = c.execute(
+            text(f"""UPDATE passage_processing
+                        SET state='selected', reason='materialization_cleared',
+                            active_extraction_run_id=NULL, updated_at=now()
+                      WHERE {sc} AND state='extracted'"""),
+            p,
+        ).rowcount
+    return counts
+
+
 def _semantic_audit(engine: Engine, scope: Scope) -> dict[str, object]:
     params = {"tenant": scope.tenant_id, "project": scope.project_id}
     with engine.connect() as connection:
