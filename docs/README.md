@@ -497,3 +497,53 @@ named, freshly migrated database.
   normalization notes.
 - [Fixture documentation](../fixtures/README.md) — behavior cases and fixture
   execution.
+
+## Assignment handoff (2026-10-14)
+
+This repository also includes the retrieval-and-answering assignment deliverables.
+The authoritative inventory, provenance status, commands, and SHA-256 inventory is
+in [the submission delivery map](submission-delivery-map.md).
+
+### Implemented workflow
+
+After the graph is built, the assignment workflow runs a frozen hybrid retriever,
+locally validates citations against the exact evidence sent to the model, and writes
+main, extra-mode, and fixture answer/trace artifacts. The examples notebook is
+read-only: it renders saved evidence and history without querying a database or a
+provider.
+
+```bash
+bin/runner python -m potency_kg.cli answer \
+  --config configs/casgevy-potency.json --output results
+bin/runner python -m potency_kg.cli run-fixture-answers \
+  --config configs/casgevy-potency.json --output results
+bin/runner python -m potency_kg.cli evaluate \
+  --results results --cases results/evaluation/cases.jsonl
+bin/runner jupyter nbconvert --to notebook --execute \
+  notebooks/06_retrieval_and_answering_examples.ipynb \
+  --output /tmp/potency-retrieval-examples.ipynb
+```
+
+The frozen retrieval policy, prompt identity, snapshot-binding rule, and P3
+vector-versus-graph comparison are documented in
+[Retrieval method and configuration](retrieval-method.md) and
+[P3 vector versus graph comparison](p3-vector-graph-comparison.md).
+
+### Recorded outcome and limits
+
+- Real runs produced seven required main answer/trace pairs, five extra vector-mode
+  pairs, and three fixture answer/trace pairs.
+- The final offline suite recorded 353 passing tests. Saved generation usage is
+  54,886 main tokens plus 7,323 fixture tokens; provider dollar rates were not
+  supplied, so no actual dollar cost is claimed.
+- Evaluation preserves five frozen E-cases as `unscorable`, rather than scoring
+  them as failures, because no saved run matches their questions.
+- Final delivery verification is intentionally blocked: the preserved real fixture
+  report lacks the contract-required `scenarios` field, so no delivery manifest was
+  produced. The graph-signal measurement is also marked `not_run` because external
+  embedding approval for its corpus-derived questions was denied.
+
+Next steps are to repair the fixture report through its provenance-preserving
+producer, deliberately run and save the E-case attempts, then rerun
+`verify-deliverables`. The root `README.md` remains unchanged; this document is the
+project's documentation-local handoff README.
