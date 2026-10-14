@@ -27,9 +27,12 @@ def _reference(candidate: RetrievalCandidate) -> dict[str, str]:
 
 
 def _git_commit(root: Path) -> str:
-    result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
-                            text=True, check=True)
-    return result.stdout.strip()
+    try:
+        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                                text=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return "unavailable"
+    return result.stdout.strip() or "unavailable"
 
 
 def _write_jsonl(path: Path, rows: Sequence[dict[str, object]], root: Path) -> None:
@@ -124,17 +127,19 @@ def answer_from_retrieval(
         _apply_context(trace, context, retrieved.candidates)
         answer, usage, elapsed_ms, attempts = answer_question(
             generation_client, question, context, config=config)
+        trace.update({"usage": usage, "elapsed_ms": elapsed_ms,
+                      "attempts": list(attempts)})
         citations = expand_citations(answer, context, scope,
                                      allow_normalized=config.allow_normalized_quote_match)
-        trace.update({"status": "succeeded", "usage": usage, "elapsed_ms": elapsed_ms,
-                      "attempts": list(attempts), "citation_check": validate_citations(
-                          answer, context, allow_normalized=config.allow_normalized_quote_match)})
+        citation_check = validate_citations(
+            answer, context, allow_normalized=config.allow_normalized_quote_match)
         record: dict[str, object] = {
             "question_id": question_id, "mode": mode, "answer": answer.answer,
             "citations": citations, "evidence_gaps": answer.evidence_gaps,
             "trace_id": trace["trace_id"], "scope": trace["scope"],
             "corpus_snapshot": corpus_snapshot,
         }
+        trace.update({"status": "succeeded", "citation_check": citation_check})
         return record, trace
     except AnswerGenerationError as error:
         trace.update({"failure_kind": error.failure_kind, "error_type": error.error_type,

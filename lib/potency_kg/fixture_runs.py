@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections import defaultdict
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,7 @@ from .alias_discovery import AliasDiscoveryReport, discover_aliases_deterministi
 from .aliases import AliasSeedReport, load_alias_seeds
 from .contracts import ScopedPassageIdentity
 from .embedding_client import EmbeddingClient
-from .embeddings import EmbeddingReport, embed_active_passages
+from .embeddings import EmbeddingReport, embed_active_passages, embed_query
 from .export import ExportReport, export_graph_version
 from .extraction import ExtractionReport, extract_selected_passages
 from .fixture_catalog import FixtureCatalog, FixtureRunConfiguration
@@ -30,7 +32,8 @@ from .processing_policy import JevSelectionPolicy
 from .project_profiles import assert_protected_inputs_unchanged, protected_input_hashes
 from .output_safety import guard_output_path
 from .resolution import materialize_extraction
-from .retrieval import RetrievalLimits, RetrievalTrace, retrieve_graph_smoke
+from .retrieval import RetrievalLimits, RetrievalResult, RetrievalTrace, retrieve, retrieve_graph_smoke
+from .retrieval_config import HybridRetrievalConfig
 
 
 @dataclass(frozen=True)
@@ -53,7 +56,7 @@ class FixtureRunReport:
     jev: JevProcessingReport
     extraction: ExtractionReport
     graph: GraphRefreshReport
-    retrieval: RetrievalTrace
+    retrieval: RetrievalTrace | RetrievalResult
     export: ExportReport
 
 
@@ -194,9 +197,19 @@ def run_kg_fixtures(
     catalog: FixtureCatalog,
     output_root: Path,
     clients: ModelClients,
+    *,
+    allow_real: bool = False,
+    env: Mapping[str, str] | None = None,
+    on_stage: Callable[[FixtureRunConfiguration, FixtureRunReport], None] | None = None,
+    retrieval_config: HybridRetrievalConfig | None = None,
 ) -> FixtureGraphReport:
     """Run every supplied fixture through import, semantic processing, retrieval, and export."""
-    _require_offline_test_doubles(clients)
+    if allow_real:
+        environment = os.environ if env is None else env
+        if environment.get("KG_RUN_REAL_MODELS") != "true":
+            raise ValueError("KG_RUN_REAL_MODELS=true is required for real fixture models")
+    else:
+        _require_offline_test_doubles(clients)
     root = guard_output_path(output_root, package_root=catalog.package_root)
     before = dict(protected_input_hashes(catalog.package_root))
     reports: list[FixtureRunReport] = []
@@ -222,19 +235,29 @@ def run_kg_fixtures(
             )
             _materialize_all(engine, extraction)
             graph = refresh_graph(engine, configuration.scope, mode="semantic")
-            retrieval = retrieve_graph_smoke(
-                engine,
-                configuration.scope,
-                configuration.question or "What supplied fixture evidence is current?",
-                clients.embedding,
-                embeddings.index_version,
-                RetrievalLimits(),
-            )
+            question = configuration.question or "What supplied fixture evidence is current?"
+            if allow_real:
+                # The completed result is passed to the stage callback.  Answering
+                # reuses its query embedding and never issues a second retrieval.
+                config = retrieval_config or HybridRetrievalConfig()
+                query_embedding = embed_query(clients.embedding, question)
+                retrieval = retrieve(
+                    engine, configuration.scope, question, "graph", clients.embedding,
+                    embeddings.index_version, config, query_embedding,
+                )
+            else:
+                retrieval = retrieve_graph_smoke(
+                    engine, configuration.scope, question, clients.embedding,
+                    embeddings.index_version, RetrievalLimits(),
+                )
             exported = export_graph_version(engine, configuration.scope, output_dir / "kg", graph.graph_version)
-            reports.append(FixtureRunReport(
+            stage_report = FixtureRunReport(
                 configuration, output_dir, imported, alias_seeds, alias_discovery,
                 embeddings, jev, extraction, graph, retrieval, exported
-            ))
+            )
+            reports.append(stage_report)
+            if on_stage is not None:
+                on_stage(configuration, stage_report)
         reconnect_verified = _verify_reconnect(engine, tuple(reports), clients)
         return FixtureGraphReport(tuple(reports), before, reconnect_verified)
     finally:

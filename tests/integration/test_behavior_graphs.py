@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -15,6 +16,7 @@ from potency_kg.aliases import AliasDecision, AliasSeedReport, approved_alias_ca
 from potency_kg.contracts import Scope, ScopedPassageIdentity
 from potency_kg.embedding_client import EmbeddingBatch, EmbeddingClientIdentity
 from potency_kg.fixture_catalog import load_fixture_catalog
+from potency_kg.fixture_answers import FixtureAnswerRecorder
 from potency_kg.fixture_runs import ModelClients, run_kg_fixtures
 from potency_kg.jev_client import JevClientIdentity, JevResponse, NoulQuestion
 from potency_kg.llm_client import GenerationClientIdentity
@@ -147,6 +149,59 @@ def test_fixture_orchestration_uses_one_database_and_preserves_declared_history(
     assert conflict == ["plan-k-note-a", "plan-k-note-b"] and conflict_assertions == 2 and contradictions == 0
     assert any("assay Vega is used as a release assay" in claim for claim in conflict_claims)
     assert any("assay Vega is not used as a release assay" in claim for claim in conflict_claims)
+
+
+def test_fixture_stage_callback_observes_before_version_before_replacement(db_engine, tmp_path) -> None:
+    """Moving the callback after the loop would make the before answer see v2 as current."""
+    catalog = load_fixture_catalog(PACKAGE_ROOT)
+    clients = ModelClients(_EmbeddingDouble(), _JevDouble(), _ExtractionDouble())
+    observed: list[tuple[str, str]] = []
+
+    def on_stage(configuration, report) -> None:
+        if configuration.scenario_id != "source-correction":
+            return
+        with db_engine.connect() as connection:
+            version = connection.execute(text("""SELECT source_version FROM source_head
+                WHERE tenant_id='fixture-tenant' AND project_id='source-correction'
+                  AND source_id='assay-attribute-note'""")).scalar_one()
+        assert report.export.version_dir.is_dir()
+        observed.append((configuration.stage, version))
+
+    run_kg_fixtures(db_engine, catalog, tmp_path / "fixture-output", clients,
+                    on_stage=on_stage)
+
+    assert observed == [("before", "fixture-v1"), ("after", "fixture-v2")]
+
+
+def test_isolation_requeries_both_scopes_after_both_graphs_exist(db_engine, tmp_path) -> None:
+    """Project one's post-build query must stay scoped even after project two is loaded."""
+    catalog = load_fixture_catalog(PACKAGE_ROOT)
+    clients = ModelClients(_EmbeddingDouble(), _JevDouble(), _ExtractionDouble())
+    report = run_kg_fixtures(db_engine, catalog, tmp_path / "pipeline", clients)
+    recorder = FixtureAnswerRecorder(tmp_path / "results" / "fixtures", package_root=PACKAGE_ROOT)
+
+    with db_engine.connect() as connection:
+        scopes = set(connection.execute(text("""SELECT project_id FROM source_head
+            WHERE tenant_id='fixture-tenant' AND project_id IN ('project-one','project-two')""")).scalars())
+    assert scopes == {"project-one", "project-two"}
+
+    recorder.record_cross_scope_isolation(db_engine, report, clients.embedding)
+
+    for project, own_marker, foreign_marker in (
+        ("project-one", "PROJECT_ONE_ONLY", "PROJECT_TWO_ONLY"),
+        ("project-two", "PROJECT_TWO_ONLY", "PROJECT_ONE_ONLY"),
+    ):
+        path = (tmp_path / "results" / "fixtures" / "history" /
+                f"isolation-{project}" / "combined" / "cross-scope-retrieval-traces.jsonl")
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        assert len(rows) == 1
+        assert rows[0]["cross_scope_check"] is True
+        assert all(own_marker in passage["text"] and foreign_marker not in passage["text"]
+                   for passage in rows[0]["passages"])
+        assert rows[0]["passages"]
+    assert recorder.answers == recorder.traces == []
+    checks = recorder.finish(db_engine, report)["checks"]
+    assert checks["isolation_after_both_scopes"] == "passed"
 
 
 def test_fixture_orchestration_prepares_aliases_idempotently_without_semantic_identity_drift(

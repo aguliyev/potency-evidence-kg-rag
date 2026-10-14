@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .age_projection import refresh_graph
-from .answer_runs import run_answer_batch
+from .answer_runs import _git_commit, run_answer_batch
 from .aliases import AliasDecision
 from .contracts import Scope, ScopedPassageIdentity
 from .db import create_engine_from_env
@@ -35,6 +35,7 @@ from .export import (
 )
 from .extraction import build_response_model, extract_selected_passages
 from .fixture_catalog import load_fixture_catalog
+from .fixture_answers import FixtureAnswerRecorder
 from .fixture_runs import ModelClients, run_kg_fixtures
 from .ids import canonical_json, derive_extraction_version
 from .ingest import ImportRequest, import_source_version, preflight_official_inputs
@@ -697,6 +698,46 @@ def run_fixture_workflow(package_root: Path, output_root: Path) -> dict[str, obj
                 dispose()
 
 
+def run_fixture_answer_workflow(
+    package_root: Path, output_root: Path, *, env: Mapping[str, str],
+) -> dict[str, object]:
+    """Run the five real fixture stages with generation at each behavior boundary."""
+    _require_stage(env, load_embedding_settings)
+    _require_stage(env, load_jev_settings)
+    _require_stage(env, load_generation_settings)
+    root = package_root.resolve()
+    output = guard_output_path(output_root.absolute(), package_root=root)
+    before = dict(protected_input_hashes(root))
+    engine: Engine | None = None
+    try:
+        catalog = load_fixture_catalog(root)
+        behavior = json.loads((root / "fixtures" / "behavior-cases.json").read_text(encoding="utf-8"))
+        question_ids = {scenario["id"]: scenario["question_id"] for scenario in behavior["scenarios"]}
+        config = HybridRetrievalConfig()
+        recorder = FixtureAnswerRecorder(output, package_root=root,
+                                         config=config, git_commit=_git_commit(root))
+        recorder.preflight(catalog.runs)
+        pipeline = guard_output_path(output / "pipeline", package_root=root,
+                                     boundary=output, label="fixture answer output")
+        generation = _generation_client(env)
+        clients = ModelClients(_embedding_client(env), _jev_client(env), generation)
+
+        def on_stage(configuration, report) -> None:
+            recorder.record_stage(configuration, report, generation, question_ids)
+
+        engine = create_engine_from_env()
+        graph = run_kg_fixtures(engine, catalog, pipeline, clients, allow_real=True,
+                                env=env, on_stage=on_stage, retrieval_config=config)
+        recorder.record_cross_scope_isolation(engine, graph, clients.embedding)
+        return recorder.finish(engine, graph)
+    finally:
+        try:
+            assert_protected_inputs_unchanged(root, before)
+        finally:
+            if engine is not None:
+                engine.dispose()
+
+
 def inspect_kg_workflow(
     config: Path,
     *,
@@ -883,6 +924,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     fixtures = subparsers.add_parser("run-kg-fixtures")
     fixtures.add_argument("--output", type=Path, default=Path("results/kg/fixtures"))
+    fixture_answers = subparsers.add_parser("run-fixture-answers")
+    fixture_answers.add_argument("--output", type=Path, default=Path("results/fixtures"))
     return parser
 
 
@@ -922,6 +965,8 @@ def _execute(args: argparse.Namespace, env: Mapping[str, str]) -> object:
         return _guarded_config_call(args.config, answer_operation)
     if command == "run-kg-fixtures":
         return run_fixture_workflow(_package_root(), args.output)
+    if command == "run-fixture-answers":
+        return run_fixture_answer_workflow(_package_root(), args.output, env=env)
     if command == "inspect-kg":
         return inspect_kg_workflow(
             args.config,

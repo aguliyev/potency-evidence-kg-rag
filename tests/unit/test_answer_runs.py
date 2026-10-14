@@ -65,6 +65,20 @@ def _rows(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
+def test_git_commit_uses_stable_fallback_when_git_lookup_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A hermetic runner without git must still produce a safe trace identity."""
+    import potency_kg.answer_runs as runs
+
+    def missing_git(*_args, **_kwargs):
+        raise FileNotFoundError("git executable unavailable")
+
+    monkeypatch.setattr(runs.subprocess, "run", missing_git)
+
+    assert runs._git_commit(tmp_path) == "unavailable"
+
+
 def test_batch_writes_contract_fields_exact_sent_evidence_and_distinct_mode_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -199,6 +213,7 @@ def test_answer_command_is_gated_before_any_output_or_client_construction(
     """Bypassing the model gate must fail before a provider or output path is touched."""
     import potency_kg.cli as cli
 
+    monkeypatch.delenv(cli.MODEL_GATE, raising=False)
     monkeypatch.setattr(cli, "_embedding_client", lambda _env: pytest.fail("client constructed"))
     monkeypatch.setattr(cli, "_generation_client", lambda _env: pytest.fail("client constructed"))
     destination = tmp_path / "results"
@@ -319,6 +334,83 @@ def test_prepared_retrieval_can_be_answered_without_embedding_or_database_access
     assert trace["selected_passage_ids"] == ["sent"]
     assert trace["index_version"] == "index-v1" and trace["graph_version"] == "graph-v1"
     assert trace["git_commit"] == "fixed-commit"
+
+
+def test_post_generation_failure_preserves_generation_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failure after generation must retain returned telemetry and exact sent evidence."""
+    import potency_kg.answer_runs as runs
+
+    config = HybridRetrievalConfig()
+    retrieved = RetrievalResult("retriever-v1", "query-hash", "embedding-v1", "index-v1",
+                                "graph-v1", "graph", config, (), ("seed-1",), ("node-1",),
+                                ("edge-1",), (), (_candidate("sent"),), {})
+    usage = {"input_tokens": 17, "output_tokens": 4}
+    attempts = ({"attempt": 1, "validated": True},)
+    generated_context: list[str] = []
+
+    def fake_answer_question(_client, _question, context, *, config):
+        generated_context.append(context.evidence_text)
+        return AnswerModel(answer="Supported.", citations=[], evidence_gaps=[]), usage, 23, attempts
+
+    def fail_expansion(*_args, **_kwargs):
+        raise ValueError("invalid citation record")
+
+    monkeypatch.setattr(runs, "answer_question", fake_answer_question)
+    monkeypatch.setattr(runs, "expand_citations", fail_expansion)
+    answer, trace = runs.answer_from_retrieval(
+        "fixture-1", "What is supported?", "graph", retrieved,
+        Scope("tenant", "project"), "snapshot-1", FakeGeneration(), 6000, config,
+        git_commit="fixed-commit")
+
+    assert answer is None
+    assert trace["status"] == "failed" and trace["failure_kind"] == "schema"
+    assert trace["usage"] == usage
+    assert trace["elapsed_ms"] == 23
+    assert trace["attempts"] == list(attempts)
+    assert trace["evidence_text"] == generated_context[0]
+
+
+def test_record_construction_failure_keeps_trace_failed_and_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A record construction error after validation must not leave a succeeded trace."""
+    import potency_kg.answer_runs as runs
+
+    class InvalidRecordAnswer:
+        citations: list[object] = []
+        evidence_gaps: list[object] = []
+
+        @property
+        def answer(self) -> str:
+            raise ValueError("invalid answer record")
+
+    config = HybridRetrievalConfig()
+    retrieved = RetrievalResult("retriever-v1", "query-hash", "embedding-v1", "index-v1",
+                                "graph-v1", "graph", config, (), ("seed-1",), ("node-1",),
+                                ("edge-1",), (), (_candidate("sent"),), {})
+    usage = {"input_tokens": 17, "output_tokens": 4}
+    attempts = ({"attempt": 1, "validated": True},)
+    generated_context: list[str] = []
+
+    def fake_answer_question(_client, _question, context, *, config):
+        generated_context.append(context.evidence_text)
+        return InvalidRecordAnswer(), usage, 23, attempts
+
+    monkeypatch.setattr(runs, "answer_question", fake_answer_question)
+    monkeypatch.setattr(runs, "expand_citations", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(runs, "validate_citations",
+                        lambda *_args, **_kwargs: {"status": "passed", "failures": []})
+    answer, trace = runs.answer_from_retrieval(
+        "fixture-1", "What is supported?", "graph", retrieved,
+        Scope("tenant", "project"), "snapshot-1", FakeGeneration(), 6000, config,
+        git_commit="fixed-commit")
+
+    assert answer is None
+    assert trace["status"] == "failed" and trace["failure_kind"] == "schema"
+    assert trace["usage"] == usage
+    assert trace["elapsed_ms"] == 23
+    assert trace["attempts"] == list(attempts)
+    assert trace["evidence_text"] == generated_context[0]
 
 
 def test_answer_cli_offline_run_writes_seven_main_and_five_extra_records(
