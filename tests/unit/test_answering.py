@@ -117,6 +117,33 @@ def test_unknown_tag_fails_even_if_quote_exists_in_other_evidence() -> None:
     assert "S2" in caught.value.attempts[1]["feedback"]
 
 
+def test_nonempty_evidence_rejects_uncited_factual_answer_despite_gap_list() -> None:
+    reply = {"answer": "The assay measures HbF potency.", "citations": [],
+             "evidence_gaps": ["The acceptance threshold was not found."]}
+    client = FakeClient([reply, reply])
+
+    with pytest.raises(CitationValidationError) as caught:
+        answer_question(client, "What measures potency?", context())
+
+    assert caught.value.failure_kind == "citation_validation"
+    assert caught.value.citation_check["failures"][0]["reason"] == "missing_citation"
+    assert len(caught.value.attempts) == 2
+
+
+def test_repair_is_capped_at_one_even_when_config_allows_more() -> None:
+    reply = {"answer": "Unsupported [S1].", "citations": [
+        {"tag": "S1", "quote": "words not in evidence"}], "evidence_gaps": []}
+    client = FakeClient([reply, reply])
+
+    with pytest.raises(CitationValidationError) as caught:
+        answer_question(client, "What measures potency?", context(),
+                        config=HybridRetrievalConfig(citation_repair_attempts=5))
+
+    assert len(client.calls) == 2
+    assert len(caught.value.attempts) == 2
+    assert caught.value.citation_check["status"] == "failed"
+
+
 def test_empty_evidence_returns_scoped_gap_without_provider_call() -> None:
     selected = build_context((), 200, HybridRetrievalConfig())
     client = FakeClient([])

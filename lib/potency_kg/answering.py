@@ -104,7 +104,7 @@ def validate_citations(
     """Check every quote against the text sent for its own tag, never original text."""
     failures: list[dict[str, str]] = []
     matches: list[dict[str, str]] = []
-    if context.evidence_text and not answer.citations and not answer.evidence_gaps:
+    if context.evidence_text and not answer.citations:
         failures.append({"tag": "", "quote": "", "reason": "missing_citation"})
     for cited in answer.citations:
         key = context.tag_to_key.get(cited.tag)
@@ -162,7 +162,7 @@ def answer_question(
     usage: dict[str, int | float | None] = {}
     elapsed_ms = 0
     feedback: str | None = None
-    for _ in range(settings.citation_repair_attempts + 1):
+    for _ in range(min(settings.citation_repair_attempts, 1) + 1):
         model_text = base_message if feedback is None else base_message + "\n\n" + feedback
         started = monotonic()
         try:
