@@ -10,7 +10,7 @@ import pytest
 
 from potency_kg.answering import AnswerModel
 from potency_kg.contracts import Scope
-from potency_kg.embedding_client import EmbeddingBatch, EmbeddingClientIdentity
+from potency_kg.embedding_client import EmbeddingBatch, EmbeddingClientIdentity, EmbeddingInputError
 from potency_kg.retrieval import RetrievalCandidate, RetrievalResult
 from potency_kg.retrieval_config import HybridRetrievalConfig
 
@@ -155,6 +155,42 @@ def test_failed_generation_writes_safe_trace_without_answer_and_continues(
     assert traces[0]["error_type"] == "RuntimeError"
     assert traces[0]["attempts"] and traces[0]["evidence_text"]
     assert "secret-provider-detail" not in (tmp_path / "results/traces.jsonl").read_text()
+
+
+@pytest.mark.parametrize("stage,error_type", [
+    ("embedding", "EmbeddingInputError"),
+    ("retrieval", "ValueError"),
+])
+def test_internal_embedding_or_retrieval_validation_failure_is_schema_trace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stage: str, error_type: str,
+) -> None:
+    """Mislabeling a local input/binding validation error as a provider failure must fail."""
+    import potency_kg.answer_runs as runs
+
+    class InvalidEmbedding(FakeEmbedding):
+        def embed(self, texts: list[str]) -> EmbeddingBatch:
+            raise EmbeddingInputError("private validation detail")
+
+    def invalid_retrieval(*_args, **_kwargs):
+        raise ValueError("private binding detail")
+
+    if stage == "retrieval":
+        monkeypatch.setattr(runs, "retrieve", invalid_retrieval)
+    embedding = InvalidEmbedding() if stage == "embedding" else FakeEmbedding()
+    output = tmp_path / stage
+    runs.run_answer_batch(object(), Scope("tenant", "project"),
+                          {"corpus_snapshot": "snapshot-1"},
+                          [{"id": "P1", "question": "A", "compare_modes": False}],
+                          output, embedding, FakeGeneration(), "index-v1",
+                          HybridRetrievalConfig(), package_root=ROOT)
+
+    traces = _rows(output / "traces.jsonl") + _rows(output / "extra-mode/traces.jsonl")
+    assert len(traces) == 2
+    assert all(trace["status"] == "failed" and trace["failure_kind"] == "schema"
+               and trace["error_type"] == error_type and trace["failed_stage"] == stage
+               for trace in traces)
+    assert _rows(output / "answers.jsonl") == _rows(output / "extra-mode/answers.jsonl") == []
+    assert "private" not in (output / "traces.jsonl").read_text()
 
 
 def test_answer_command_is_gated_before_any_output_or_client_construction(

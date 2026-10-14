@@ -202,7 +202,8 @@ def run_answer_batch(
             except Exception as error:
                 trace = _trace_base(question_id, question, mode, scope, snapshot, index_version,
                                     cap, config, generation_client, commit)
-                trace.update({"failure_kind": "provider", "error_type": type(error).__name__,
+                failure_kind = "schema" if isinstance(error, (ValueError, TypeError, AssertionError)) else "provider"
+                trace.update({"failure_kind": failure_kind, "error_type": type(error).__name__,
                               "failed_stage": "embedding" if embedding_error is not None else "retrieval"})
                 answer_row = None
             if answer_row is not None:
