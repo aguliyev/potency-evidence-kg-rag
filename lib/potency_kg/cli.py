@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .age_projection import refresh_graph
+from .answer_runs import run_answer_batch
 from .aliases import AliasDecision
 from .contracts import Scope, ScopedPassageIdentity
 from .db import create_engine_from_env
@@ -46,6 +47,7 @@ from .project_profiles import assert_protected_inputs_unchanged, protected_input
 from .prompt_resources.extraction import assemble_prompt
 from .resolution import materialize_extraction
 from .retrieval import RetrievalLimits, retrieve_graph_smoke
+from .retrieval_config import HybridRetrievalConfig
 from .settings import (
     load_embedding_settings,
     load_generation_settings,
@@ -874,6 +876,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config(run)
     run.add_argument("--output", required=True, type=Path)
 
+    answer = subparsers.add_parser("answer")
+    _add_config(answer)
+    answer.add_argument("--output", required=True, type=Path)
+    answer.add_argument("--default-budget-chars", type=int, default=16000)
+
     fixtures = subparsers.add_parser("run-kg-fixtures")
     fixtures.add_argument("--output", type=Path, default=Path("results/kg/fixtures"))
     return parser
@@ -885,6 +892,34 @@ def _execute(args: argparse.Namespace, env: Mapping[str, str]) -> object:
         return hash_inputs(_package_root(), output=args.output, verify=args.verify)
     if command == "run-kg":
         return run_kg_workflow(args.config, args.output, env=env)
+    if command == "answer":
+        _require_stage(env, load_embedding_settings)
+        _require_stage(env, load_generation_settings)
+        if args.default_budget_chars < 0:
+            raise ValueError("default answer budget must be nonnegative")
+
+        def answer_operation(config: Path, scope: Scope, engine: Engine) -> object:
+            descriptor = json.loads(config.read_text(encoding="utf-8"))
+            questions_path = (config.parent / descriptor["questions"]).resolve()
+            if not _inside(questions_path, _package_root()):
+                raise ValueError("questions path escapes package")
+            questions = json.loads(questions_path.read_text(encoding="utf-8"))
+            if not isinstance(questions, list):
+                raise ValueError("questions must be a list")
+            with engine.connect() as connection:
+                index_version = connection.execute(text(
+                    "SELECT index_version FROM graph_scope "
+                    "WHERE tenant_id=:tenant AND project_id=:project"
+                ), {"tenant": scope.tenant_id, "project": scope.project_id}).scalar_one_or_none()
+            if index_version is None:
+                raise ValueError("scope has no active bound index")
+            config_values = replace(HybridRetrievalConfig(),
+                                    default_budget_chars=args.default_budget_chars)
+            return run_answer_batch(engine, scope, descriptor, questions, args.output,
+                                    _embedding_client(env), _generation_client(env),
+                                    str(index_version), config_values, package_root=_package_root())
+
+        return _guarded_config_call(args.config, answer_operation)
     if command == "run-kg-fixtures":
         return run_fixture_workflow(_package_root(), args.output)
     if command == "inspect-kg":

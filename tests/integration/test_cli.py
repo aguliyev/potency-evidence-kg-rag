@@ -29,6 +29,7 @@ def test_parser_exposes_only_derived_version_commands() -> None:
         "export-kg",
         "inspect-kg",
         "run-kg",
+        "answer",
         "run-kg-fixtures",
         "load-alias-seeds",
         "discover-aliases-deterministic",

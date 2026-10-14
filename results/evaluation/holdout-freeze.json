@@ -1,0 +1,10 @@
+{
+  "status": "frozen_before_main_run",
+  "freeze_timestamp_utc": "2026-10-14T00:54:37Z",
+  "case_version": "v1",
+  "holdout_case_ids": ["E3-draft-status", "E4-indication-scope", "E5-no-public-value"],
+  "holdout_sha256": "eebf1748bb5ba093da98656e58d43a904bd98f94ed59b80949e1e2fa9c983ac1",
+  "hash_method": "SHA-256 of UTF-8 jq -c 'select(.split == \"holdout\")' output, including newline after each row",
+  "cases_file_sha256": "5413f4c85e5eb0ad5eeb793f9736af561bd9f8683d5cecc124f787b0a2d90f67",
+  "main_answer_run_status": "deferred"
+}
