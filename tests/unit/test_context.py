@@ -91,6 +91,33 @@ def test_unused_graph_share_returns_to_unused_vector_hits() -> None:
     assert [item.candidate.key for item in merged] == [a.key, b.key]
 
 
+def test_graph_share_does_not_claim_unused_vector_allocation_when_return_disabled() -> None:
+    vector = candidate("vector", "v" * 20, score=0.9)
+    graph_one = candidate("g1", "g" * 50, via="graph", score=0.8)
+    graph_two = candidate("g2", "h" * 50, via="graph", score=0.7)
+    strict = merge_candidates((vector, graph_one, graph_two), "graph", 250,
+                              HybridRetrievalConfig(graph_share=0.5,
+                                                    return_unused_graph_share=False,
+                                                    truncate_last_passage=False))
+    returned = merge_candidates((vector, graph_one, graph_two), "graph", 250,
+                                HybridRetrievalConfig(graph_share=0.5,
+                                                      return_unused_graph_share=True,
+                                                      truncate_last_passage=False))
+    assert [item.candidate.key for item in strict] == [vector.key, graph_one.key]
+    assert [item.candidate.key for item in returned] == [vector.key, graph_one.key, graph_two.key]
+
+
+def test_score_context_reorders_merged_passages_without_changing_selection() -> None:
+    vector = candidate("vector", "v", score=0.5)
+    graph = candidate("graph", "g", via="graph", score=0.9)
+    merged = merge_candidates((vector, graph), "graph", 200,
+                              HybridRetrievalConfig(graph_share=0.5))
+    assert [item.candidate.key for item in merged] == [vector.key, graph.key]
+    context = build_context(merged, 200, HybridRetrievalConfig(context_order="score"))
+    assert context.tag_to_key == {"S1": graph.key, "S2": vector.key}
+    assert list(context.sent_text) == [graph.key, vector.key]
+
+
 def test_vector_floor_dedup_and_document_cap() -> None:
     high = candidate("high", "a", score=0.9, document="same")
     duplicate = replace(high, score=0.8)

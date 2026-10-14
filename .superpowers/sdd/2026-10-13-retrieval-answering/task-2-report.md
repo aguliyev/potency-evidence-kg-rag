@@ -25,3 +25,11 @@ The functions perform no provider or database calls. All source-derived context 
 ## Commit
 
 `Implement budgeted evidence merge and context rendering` (this report is included in the same commit).
+
+## Review fixes
+
+The review identified two allocation/presentation defects. Added two regression tests first. `PYTHONPATH=lib .venv/bin/python -m pytest tests/unit/test_context.py -q` returned **2 failed, 8 passed**: with share return disabled, a second graph passage consumed unused vector allocation; and `context_order="score"` left a lower-score vector passage before a higher-score graph passage. After the fixes, `PYTHONPATH=lib .venv/bin/python -m pytest tests/unit/test_context.py tests/unit/test_retrieval_config.py -q` returned **26 passed in 0.31s**.
+
+Graph allocation now has a strict phase limit equal to its reserved share plus the vector cost already used when `return_unused_graph_share=False`. With the flag enabled, unused vector allocation can be returned to graph-only passages; if graph candidates run out, remaining capacity can still return to unused vector passages. Final score presentation sorts selected passages by descending score and passage key after selection, so score order and document order share the same selected set. No alias behavior, `.idea` file, or provider path was changed.
+
+Fresh full unit run after the review fixes: `PYTHONPATH=lib .venv/bin/python -m pytest tests/unit -q` returned **1 failed, 110 passed in 0.54s**; the sole failure remains `test_llm_alias_discovery_is_disabled_unless_explicitly_enabled` with the same `True is False` assertion described above. `graphify update .` exited 0, rebuilding 1,704 nodes and 4,670 edges.

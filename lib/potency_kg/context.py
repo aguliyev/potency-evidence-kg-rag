@@ -140,8 +140,11 @@ def merge_candidates(
     if mode == "vector":
         fill(vectors, max_chars)
     else:
-        fill(vectors, floor((1 - config.graph_share) * max_chars))
-        fill(graphs, max_chars)
+        vector_limit = floor((1 - config.graph_share) * max_chars)
+        fill(vectors, vector_limit)
+        graph_limit = (max_chars if config.return_unused_graph_share
+                       else used + max_chars - vector_limit)
+        fill(graphs, graph_limit)
         if config.return_unused_graph_share:
             fill(vectors, max_chars)
     return tuple(selected)
@@ -192,6 +195,8 @@ def build_context(
 
         accepted.sort(key=lambda item: (document_rank[item.candidate.document_id],
                                         page(item), item.candidate.key))
+    else:
+        accepted.sort(key=lambda item: (-item.candidate.score, item.candidate.key))
     blocks = [renderer.block(item.candidate, f"S{index}", item.sent_text)
               for index, item in enumerate(accepted, 1)]
     evidence_text = renderer.separator.join(blocks)
