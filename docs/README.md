@@ -1,34 +1,28 @@
 # Potency evidence knowledge graph
 
-This repository builds a scoped, evidence-backed knowledge graph from the supplied
-CASGEVY, regulatory, and precedent-source corpus. It preserves source provenance,
-runs optional model-assisted classification and extraction, resolves approved
-aliases, materializes a canonical graph, and publishes a validated immutable export
-under `results/kg/current/`.
+## Project summary
 
-The project is a graph-generation pipeline, not an answer-generation application.
-A later retrieval or RAG system can consume the published graph, but it must retain
-the graph's tenant/project scope, source references, and versioned provenance.
-
-## What the system does
-
-At a high level, the pipeline:
-
-1. Verifies the supplied configuration and corpus without modifying them.
-2. Imports documents and passages into PostgreSQL.
-3. Loads approved static aliases and discovers additional review candidates.
-4. Optionally embeds, classifies, and extracts structured evidence with configured
-   model providers.
-5. Resolves extracted Product and Assay mentions through the approved scoped alias
-   catalog.
-6. Materializes canonical entities, assertions, relationships, and provenance.
-7. Projects and validates an Apache AGE graph.
-8. Publishes an immutable JSONL export and promotes it as `results/kg/current/`.
-
-Every operation is scoped by the `tenant_id` and `project_id` in the selected
-configuration. Source history, model runs, alias evidence, graph versions, and
-exports remain auditable. Repeating an unchanged operation reuses or reports the
-existing result instead of inventing a new version.
+- The pipeline imports the supplied regulatory and precedent sources into a
+  tenant/project-scoped PostgreSQL store and preserves source versions and passage
+  provenance.
+- Jev is the **System One model**. It classifies passages with a fixed seven-question
+  Noul bundle; saved probabilities and thresholds determine which extraction
+  bundles run.
+- Structured extraction creates evidence-backed entities and relationships.
+  Product and Assay mentions resolve through the approved, scoped alias catalog.
+- The system builds a validated graph and supports vector and graph retrieval with
+  answers that cite passages. Traces preserve the exact evidence sent to the model.
+- [`HybridRetrievalConfig`](../lib/potency_kg/retrieval_config.py) centralizes
+  retrieval settings—such as hit counts, graph traversal, scoring, and evidence
+  budgets—so tuning it changes how evidence is selected.
+- Alias coverage is a key opportunity to improve recall. Broader automatic alias
+  discovery paired with human review and approval would help keep canonical entities
+  accurate as the corpus grows.
+- NER models could improve the detection of Products, Assays, and other domain
+  entities during extraction.
+- The best next step is a stronger evaluation loop: measure retrieval and answer
+  quality, then use the same cases to compare changes to configuration, aliases,
+  prompts, and NER models.
 
 ## Local architecture
 
