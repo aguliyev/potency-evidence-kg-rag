@@ -1,5 +1,5 @@
 {
-  "id": "deffai-potency-assignment-output-contract",
+  "id": "potency-kg-rag-potency-assignment-output-contract",
   "version": "2026-09-21-potency-rag-v2",
   "required_artifacts": [
     "import-report.json",

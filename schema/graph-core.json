@@ -1,5 +1,5 @@
 {
-  "id": "deffai-potency-evidence-graph-core",
+  "id": "potency-kg-rag-potency-evidence-graph-core",
   "version": "2026-09-21-potency-rag-v2",
   "note": "Use the supplied graph core as a reference, not a fixed ontology. You may modify, merge, or replace its node and relationship types; document consequential choices and map your representation to the required evidence provenance, tenant/project isolation, source-version identity, assertion state, and human-review state. Equivalent representations are acceptable. Every source must still have an inspectable document representation, even if you rename SourceDocument. Do not treat the listed type names as a checklist.",
   "node_types": [

@@ -1,7 +1,7 @@
 services:
   db:
-    container_name: deffai-db
-    image: deffai-db:dev
+    container_name: potency_kg_rag-db
+    image: potency_kg_rag-db:dev
     build:
       context: ..
       dockerfile: docker/Dockerfile.db
@@ -11,7 +11,7 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
-      - deffai_postgres_data:/var/lib/postgresql/data
+      - potency_kg_rag_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
@@ -20,8 +20,8 @@ services:
       start_period: 10s
 
   migrate:
-    container_name: deffai-migrate
-    image: deffai-python:dev
+    container_name: potency_kg_rag-migrate
+    image: potency_kg_rag-python:dev
     build:
       context: ..
       dockerfile: docker/Dockerfile.notebook
@@ -43,8 +43,8 @@ services:
     restart: "no"
 
   notebook:
-    container_name: deffai-notebook
-    image: deffai-python:dev
+    container_name: potency_kg_rag-notebook
+    image: potency_kg_rag-python:dev
     build:
       context: ..
       dockerfile: docker/Dockerfile.notebook
@@ -77,7 +77,7 @@ services:
     restart: unless-stopped
 
   runner:
-    image: deffai-python:dev
+    image: potency_kg_rag-python:dev
     build:
       context: ..
       dockerfile: docker/Dockerfile.notebook
@@ -99,4 +99,4 @@ services:
     profiles: ["tools"]
 
 volumes:
-  deffai_postgres_data:
+  potency_kg_rag_postgres_data:
