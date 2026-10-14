@@ -44,7 +44,7 @@ class FakeEmbedding:
 
 
 class FakeGeneration:
-    identity = SimpleNamespace(model="fake-generation")
+    identity = SimpleNamespace(model="fake-generation", provider="fake", sanitized_origin="local")
 
     def __init__(self, *, fail_question: str | None = None, invalid_quote: bool = False) -> None:
         self.fail_question = fail_question
@@ -117,6 +117,8 @@ def test_batch_writes_contract_fields_exact_sent_evidence_and_distinct_mode_file
         assert trace["config_hash"] == config.config_hash()
         assert trace["config"] == config.as_dict()
         assert trace["prompt_sha256"] and trace["git_commit"]
+        assert trace["model"] == "fake-generation"
+        assert trace["provider"] == "fake" and trace["model_origin"] == "local"
         assert len(trace["evidence_text"]) <= (6000 if trace["question_id"] == "P3" else 16000)
         assert trace["max_evidence_chars"] == (6000 if trace["question_id"] == "P3" else 16000)
         assert all(citation["passage_id"] == "sent" for citation in answer["citations"])

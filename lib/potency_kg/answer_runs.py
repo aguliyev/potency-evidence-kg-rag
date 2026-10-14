@@ -51,6 +51,8 @@ def _trace_base(
         "corpus_snapshot": corpus_snapshot, "index_version": index_version,
         "graph_version": None, "retriever_version": None, "prompt_version": prompt_version,
         "prompt_sha256": prompt_sha256, "model": generation_client.identity.model,
+        "provider": generation_client.identity.provider,
+        "model_origin": generation_client.identity.sanitized_origin,
         "git_commit": commit, "config": config.as_dict(), "config_hash": config.config_hash(),
         "max_evidence_chars": max_chars, "seed_node_ids": [], "node_ids": [],
         "traversed_edge_ids": [], "hops": [], "traversal_limits": {
