@@ -27,6 +27,16 @@ def _rows(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def _summed_generation_usage(traces: list[dict[str, object]]) -> dict[str, int | float]:
+    """Preserve the token field names actually returned by the provider."""
+    fields = ("prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens")
+    return {
+        field: sum(trace.get("usage", {}).get(field) or 0 for trace in traces)
+        for field in fields
+        if any(field in (trace.get("usage") or {}) for trace in traces)
+    }
+
+
 class FixtureAnswerRecorder:
     """Copy each stage's evidence before a later source replacement can activate."""
 
@@ -278,10 +288,7 @@ class FixtureAnswerRecorder:
             "reconnect_verified": graph.reconnect_verified,
             "reconnect_query_embedding_calls": len({run.configuration.scope for run in graph.runs}),
             "model_usage_note": "Reconnect verification embeds one query per fixture scope; post-build isolation adds one query per isolation scope. Neither generates an answer. Dollar cost is not estimated without configured provider rates.",
-            "generation_usage": {
-                key: sum(float(trace.get("usage", {}).get(key) or 0) for trace in self.traces)
-                for key in ("input_tokens", "output_tokens")
-            },
+            "generation_usage": _summed_generation_usage(self.traces),
         }
         failures: list[str] = []
 

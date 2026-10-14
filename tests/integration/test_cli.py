@@ -31,12 +31,15 @@ def test_parser_exposes_only_derived_version_commands() -> None:
         "run-kg",
         "answer",
         "run-kg-fixtures",
+        "run-fixture-answers",
         "load-alias-seeds",
         "discover-aliases-deterministic",
         "discover-aliases-llm",
         "list-aliases",
         "list-alias-evidence",
         "review-alias",
+        "evaluate",
+        "verify-deliverables",
     }
     with pytest.raises(SystemExit):
         parser.parse_args(["refresh-graph", "--config", str(CONFIG), "--graph-version", "caller-label"])

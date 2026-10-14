@@ -19,6 +19,19 @@ def _rows(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def test_fixture_usage_aggregates_provider_token_field_names() -> None:
+    from potency_kg.fixture_answers import _summed_generation_usage
+
+    traces = [
+        {"usage": {"prompt_tokens": 653, "completion_tokens": 1514, "total_tokens": 2167}},
+        {"usage": {"prompt_tokens": 653, "completion_tokens": 1821, "total_tokens": 2474}},
+    ]
+
+    assert _summed_generation_usage(traces) == {
+        "prompt_tokens": 1306, "completion_tokens": 3335, "total_tokens": 4641,
+    }
+
+
 def _stage(tmp_path: Path, scenario: str, stage: str, question: str | None):
     from potency_kg.fixture_answers import FixtureAnswerRecorder
 

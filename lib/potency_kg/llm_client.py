@@ -59,10 +59,11 @@ _TRANSIENT = (APIConnectionError, APITimeoutError, RateLimitError, InternalServe
 logger = logging.getLogger(__name__)
 
 
-# Anthropic's OpenAI-compatible endpoint rejects forced tool_choice (Instructor's openai default) on
-# adaptive-thinking models, so use markdown-JSON mode there. Other endpoints keep the default.
+# These OpenAI-compatible endpoints reject Instructor's forced tool_choice, so
+# ask for markdown JSON and validate the response locally.
 def _mode_for(settings: GenerationSettings) -> instructor.Mode | None:
-    return instructor.Mode.MD_JSON if urlsplit(settings.sanitized_origin).hostname == "api.anthropic.com" else None
+    hostname = urlsplit(settings.sanitized_origin).hostname
+    return instructor.Mode.MD_JSON if hostname in {"api.anthropic.com", "api.meta.ai"} else None
 
 
 def _contains_unselected_type(error: ValidationError, response_model: type[BaseModel]) -> bool:

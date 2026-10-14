@@ -21,6 +21,7 @@ from .age_projection import refresh_graph
 from .answer_runs import _git_commit, run_answer_batch
 from .aliases import AliasDecision
 from .contracts import Scope, ScopedPassageIdentity
+from .delivery import verify_deliverables
 from .db import create_engine_from_env
 from .embedding_client import (
     EmbeddingBatch,
@@ -28,6 +29,7 @@ from .embedding_client import (
     OpenAIEmbeddingClient,
 )
 from .embeddings import embed_active_passages
+from .evaluation import evaluate_saved
 from .export import (
     ExportReport,
     export_graph_version,
@@ -926,6 +928,12 @@ def build_parser() -> argparse.ArgumentParser:
     fixtures.add_argument("--output", type=Path, default=Path("results/kg/fixtures"))
     fixture_answers = subparsers.add_parser("run-fixture-answers")
     fixture_answers.add_argument("--output", type=Path, default=Path("results/fixtures"))
+    evaluate = subparsers.add_parser("evaluate")
+    evaluate.add_argument("--results", required=True, type=Path)
+    evaluate.add_argument("--cases", required=True, type=Path)
+    delivery = subparsers.add_parser("verify-deliverables")
+    delivery.add_argument("--results", required=True, type=Path)
+    delivery.add_argument("--output", required=True, type=Path)
     return parser
 
 
@@ -933,6 +941,24 @@ def _execute(args: argparse.Namespace, env: Mapping[str, str]) -> object:
     command = args.command
     if command == "hash-inputs":
         return hash_inputs(_package_root(), output=args.output, verify=args.verify)
+    if command == "evaluate":
+        root = args.results.resolve()
+        cases = args.cases.resolve()
+        if not cases.is_relative_to(root):
+            raise ValueError("evaluation cases must be inside results")
+        rows, report = evaluate_saved(root, cases)
+        destination = root / "evaluation"
+        if not destination.resolve().is_relative_to(root):
+            raise ValueError("evaluation output escapes results")
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "results.jsonl").write_text(
+            "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+        (destination / "report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return {"status": "succeeded", "case_count": len(rows), "aggregates": report["aggregates"]}
+    if command == "verify-deliverables":
+        return verify_deliverables(args.results, args.output,
+                                   _package_root() / "schema/output-contract.json", environment=env)
     if command == "run-kg":
         return run_kg_workflow(args.config, args.output, env=env)
     if command == "answer":

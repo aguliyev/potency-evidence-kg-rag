@@ -159,6 +159,25 @@ def test_instructor_adapter_uses_explicit_normalized_provider_configuration(monk
     assert "construction-secret" not in repr(client)
 
 
+def test_meta_generation_uses_json_mode_without_forced_tool_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The configured Meta endpoint accepts only automatic tool selection."""
+    created: list[dict[str, object]] = []
+
+    def build(_selector: str, **kwargs):
+        created.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(llm_client_module.instructor, "from_provider", build)
+    settings = _settings().model_copy(update={
+        "base_url": "https://api.meta.ai/v1",
+        "sanitized_origin": "https://api.meta.ai/v1",
+    })
+    client = InstructorExtractionClient(settings, SecretStr("secret"))
+
+    assert created[0]["mode"] is llm_client_module.instructor.Mode.MD_JSON
+    assert client.identity.instructor_mode == llm_client_module.instructor.Mode.MD_JSON.value
+
+
 def test_instructor_adapter_exposes_sanitized_usage_for_the_current_request() -> None:
     """Dropping the raw completion usage would make persisted extraction cost metadata false."""
     class _Instructor:
