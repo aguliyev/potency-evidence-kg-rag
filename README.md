@@ -1,5 +1,24 @@
 # DeffAI Potency KG / RAG assignment materials
 
+> **Implemented project layout**
+>
+> | Directory | Contents |
+> | --- | --- |
+> | [`bin/`](bin/) | Supported local setup, service, migration, and Docker-backed runner commands. |
+> | [`docker/`](docker/) | Compose services and container build configuration for PostgreSQL, migrations, Jupyter, and the runner. |
+> | [`docs/`](docs/) | Method notes, retrieval comparison, delivery map, and the detailed [project README](docs/README.md). |
+> | [`etc/`](etc/) | Non-secret environment defaults and private-environment templates. |
+> | [`lib/`](lib/) | Python implementation: ingestion, graph materialization, retrieval, answering, evaluation, and delivery validation. |
+> | [`migrations/`](migrations/) | Alembic database schema migrations. |
+> | [`notebooks/`](notebooks/) | Build, inspection, and read-only retrieval/answering example notebooks. |
+> | [`results/`](results/) | Generated graph exports, answer/trace artifacts, evaluation, architecture, and delivery-audit outputs. |
+> | [`tests/`](tests/) | Unit, integration, and real-model-gated regression coverage. |
+>
+> See [docs/README.md](docs/README.md) for setup, operating guidance, recorded results, and delivery limitations.
+
+--------------------------------
+--------------------------
+
 Start with [ASSIGNMENT.md](ASSIGNMENT.md), then complete [MODEL_ACCESS.md](MODEL_ACCESS.md) before the clock starts. Package edition: `2026-09-21-potency-rag-v2`; the frozen source files are retained; corpus snapshot v3 includes one audited heading-order correction.
 
 This folder contains the data and contracts for the exercise. It does not prescribe an implementation stack or include starter application code.
