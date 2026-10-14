@@ -21,20 +21,22 @@ from potency_kg.ids import derive_embedding_version
 
 
 def a_candidates(nodes, edges, node_refs, edge_refs, hits, config):
-    """Existing two-hop bounded AGE neighborhood, with degree>20 hubs skipped."""
-    excluded = set(config.excluded_node_types)
+    """Traversal A on the activated AGE snapshot: bounded edge-ID BFS, hubs unexpanded."""
+    excluded = set(config.excluded_node_types) | {"SourceDocument", "SourcePassage"}
     adjacency = defaultdict(list)
     degree = defaultdict(int)
     for edge in edges:
-        if not edge["is_evidence"] or not edge_refs.get(edge["edge_id"]):
+        if not edge["is_evidence"]:
             continue
         source, target = str(edge["source_node_id"]), str(edge["target_node_id"])
         if nodes.get(source) in excluded or nodes.get(target) in excluded:
             continue
-        adjacency[source].append((target, edge))
-        adjacency[target].append((source, edge))
         degree[source] += 1
         degree[target] += 1
+        if not edge_refs.get(edge["edge_id"]):
+            continue
+        adjacency[source].append((target, edge))
+        adjacency[target].append((source, edge))
     hit_keys = [(hit.source_id, hit.source_version, hit.passage_id) for hit in hits[:8]]
     seeds = []
     for key in hit_keys:
@@ -48,7 +50,7 @@ def a_candidates(nodes, edges, node_refs, edge_refs, hits, config):
                     break
         if len(seeds) == 8:
             break
-    frontier = [(node, 0, None, (node,), None) for node in seeds]
+    frontier = [(node, 0, None, (node,), None, False) for node in seeds]
     visited = set(seeds)
     selected = []
     traversed_edges = set()
@@ -57,40 +59,45 @@ def a_candidates(nodes, edges, node_refs, edge_refs, hits, config):
     for hop in range(3):
         per_hop.append(len(frontier))
         following = []
-        for node, _, via_edge, path, edge_type in frontier:
+        edge_options = []
+        for node, _, via_edge, path, edge_type, hub_path in frontier:
             for ref in node_refs.get(node, ()):
-                selected.append((ref, hop, node, via_edge, path, edge_type))
+                selected.append((ref, hop, node, via_edge, path, edge_type, hub_path or degree[node] > 20))
             if via_edge:
                 for ref in edge_refs.get(via_edge, ()):
-                    selected.append((ref, hop, node, via_edge, path, edge_type))
-            available = adjacency.get(node, ())
-            kept = 0
+                    selected.append((ref, hop, node, via_edge, path, edge_type, hub_path or degree[node] > 20))
             if hop < 2 and degree[node] <= 20:
-                for neighbor, edge in sorted(available, key=lambda item: item[1]["edge_id"]):
-                    if neighbor in visited or degree[neighbor] > 20 or not node_refs.get(neighbor):
-                        continue
-                    if len(visited) >= 30 or len(traversed_edges) >= 50:
-                        break
-                    visited.add(neighbor)
-                    edge_id = str(edge["edge_id"])
-                    traversed_edges.add(edge_id)
-                    following.append((neighbor, hop + 1, edge_id,
-                                      path + (edge_id, neighbor), str(edge["edge_type"])))
-                    kept += 1
-            expansions.append({"hop": hop, "entity_id": node, "relations_available": len(available),
-                               "relations_kept": kept, "hub": degree[node] > 20})
+                for neighbor, edge in adjacency.get(node, ()):
+                    edge_options.append((str(edge["edge_id"]), node, neighbor, edge,
+                                         path, hub_path))
+        kept_by_node = defaultdict(int)
+        for edge_id, parent, neighbor, edge, path, hub_path in sorted(edge_options):
+            if neighbor in visited or not node_refs.get(neighbor):
+                continue
+            if len(visited) >= 30 or len(traversed_edges) >= 50:
+                break
+            visited.add(neighbor)
+            traversed_edges.add(edge_id)
+            following.append((neighbor, hop + 1, edge_id,
+                              path + (edge_id, neighbor), str(edge["edge_type"]),
+                              hub_path or degree[neighbor] > 20))
+            kept_by_node[parent] += 1
+        for node, *_ in frontier:
+            expansions.append({"hop": hop, "entity_id": node,
+                               "relations_available": len(adjacency.get(node, ())),
+                               "relations_kept": kept_by_node[node], "hub": degree[node] > 20})
         frontier = following
         if not frontier:
             break
     by_key = {}
-    for ref, hop, node, edge, path, edge_type in selected:
+    for ref, hop, node, edge, path, edge_type, hub_path in selected:
         key = (str(ref["source_id"]), str(ref["source_version"]), str(ref["passage_id"]))
         cosine = float(ref["cosine"])
         score = config.graph_score(cosine, hop, edge_type)
         record = {"source_id": key[0], "source_version": key[1], "passage_id": key[2],
                   "text": str(ref["text"]), "cosine": cosine, "score": score, "hop": hop,
                   "via_node_id": node, "via_edge_id": edge, "supporting_path_ids": path,
-                  "hub_mediated": False}
+                  "hub_mediated": hub_path}
         if key not in by_key or score > by_key[key]["score"]:
             by_key[key] = record
     return sorted(by_key.values(), key=lambda row: (-row["score"], row["source_id"], row["passage_id"])), seeds, per_hop, expansions

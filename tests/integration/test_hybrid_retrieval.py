@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import runpy
 from typing import Sequence
 from uuid import uuid4
 
@@ -41,6 +42,83 @@ def test_projected_evidence_degree_excludes_hub_seed_even_when_refs_are_missing(
     assert seeds == () and candidates == []
 
 
+def test_parallel_evidence_edges_do_not_consume_distinct_neighbor_slots() -> None:
+    from potency_kg.retrieval import _beam_candidates
+
+    def ref(passage_id: str, cosine: float) -> dict[str, object]:
+        return {"source_id": "source", "source_version": "v1", "passage_id": passage_id,
+                "text": passage_id, "text_sha256": passage_id, "locator": {}, "cosine": cosine}
+
+    nodes = {"seed": "Assertion", "first": "Product", "second": "Product"}
+    edges = [{"edge_id": edge_id, "edge_type": "applies_to", "source_node_id": "seed",
+              "target_node_id": neighbor, "is_evidence": True}
+             for edge_id, neighbor in (("e1", "first"), ("e2", "first"), ("e3", "second"))]
+    refs = {"seed": [ref("a", 0.95)], "first": [ref("b", 0.9)],
+            "second": [ref("c", 0.8)]}
+    edge_refs = {edge["edge_id"]: [ref("a", 0.95)] for edge in edges}
+    config = HybridRetrievalConfig(vector_hits=1, seed_vector_hits=1,
+                                   neighbors_per_entity=2, max_hops=1,
+                                   hop_bonus=(0.05, 0.03))
+    candidates, seeds, visited, selected_edges, diagnostics = _beam_candidates(
+        nodes, edges, refs, edge_refs, [PassageHit("source", "v1", "a", 0.95)], config)
+    assert seeds == ("seed",)
+    assert visited == ("seed", "first", "second")
+    assert selected_edges == ("e1", "e3")
+    assert {candidate.passage_id for candidate in candidates} == {"a", "b", "c"}
+    assert diagnostics["expansions"][0]["relations_kept"] == 2
+
+
+def test_parallel_non_evidence_edge_does_not_hide_evidence_path() -> None:
+    from potency_kg.retrieval import _beam_candidates
+
+    def ref(passage_id: str) -> dict[str, object]:
+        return {"source_id": "source", "source_version": "v1", "passage_id": passage_id,
+                "text": passage_id, "text_sha256": passage_id, "locator": {}, "cosine": 0.8}
+
+    nodes = {"seed": "Assertion", "target": "Product"}
+    edges = [
+        {"edge_id": "a-structural", "edge_type": "applies_to", "source_node_id": "seed",
+         "target_node_id": "target", "is_evidence": False},
+        {"edge_id": "z-evidence", "edge_type": "applies_to", "source_node_id": "seed",
+         "target_node_id": "target", "is_evidence": True},
+    ]
+    node_refs = {"seed": [ref("a")], "target": [ref("b")]}
+    edge_refs = {edge["edge_id"]: [ref("b")] for edge in edges}
+    config = HybridRetrievalConfig(vector_hits=1, seed_vector_hits=1,
+                                   evidence_edges_only=False, max_hops=1,
+                                   hop_bonus=(0.05, 0.03))
+    candidates, _, _, selected_edges, _ = _beam_candidates(
+        nodes, edges, node_refs, edge_refs, [PassageHit("source", "v1", "a", 0.8)], config)
+    assert selected_edges == ("z-evidence",)
+    assert "b" in {candidate.passage_id for candidate in candidates}
+
+
+def test_a_baseline_keeps_hub_neighbor_without_expanding_it() -> None:
+    a_candidates = runpy.run_path(
+        ".superpowers/sdd/2026-10-13-retrieval-answering/measure_task1.py"
+    )["a_candidates"]
+    nodes = {"seed": "Assertion", "hub": "Product",
+             **{f"leaf{i}": "Product" for i in range(20)}}
+    edges = [{"edge_id": "e0", "edge_type": "applies_to",
+              "source_node_id": "seed", "target_node_id": "hub", "is_evidence": True}]
+    edges.extend({"edge_id": f"e{i+1}", "edge_type": "applies_to",
+                  "source_node_id": "hub", "target_node_id": f"leaf{i}", "is_evidence": True}
+                 for i in range(20))
+    def ref(passage_id: str) -> dict[str, object]:
+        return {"source_id": "source", "source_version": "v1", "passage_id": passage_id,
+                "text": passage_id, "cosine": 0.8}
+    node_refs = {"seed": [ref("a")], "hub": [ref("b")],
+                 **{f"leaf{i}": [ref(f"leaf{i}")] for i in range(20)}}
+    edge_refs = {edge["edge_id"]: [ref("a")] for edge in edges}
+    config = HybridRetrievalConfig()
+    candidates, seeds, hops, expansions = a_candidates(
+        nodes, edges, node_refs, edge_refs, [PassageHit("source", "v1", "a", 0.8)], config)
+    assert seeds == ["seed"]
+    assert "b" in {candidate["passage_id"] for candidate in candidates}
+    assert hops == [1, 1]
+    assert next(item for item in expansions if item["entity_id"] == "hub")["relations_kept"] == 0
+
+
 def test_graph_retrieval_selects_edge_evidence_outside_vector_hits(db_engine, monkeypatch) -> None:
     from potency_kg import retrieval
 
@@ -58,8 +136,8 @@ def test_graph_retrieval_selects_edge_evidence_outside_vector_hits(db_engine, mo
               "structural_product_id": structural_product_id, "structural_edge_id": structural_edge_id,
               "unreferenced_product_id": unreferenced_product_id, "unreferenced_edge_id": unreferenced_edge_id}
     with db_engine.begin() as connection:
-        connection.execute(text("INSERT INTO source_document (tenant_id,project_id,source_id,source_version,title,source_sha256,expected_passage_count,status) VALUES (:tenant,:project,'source','v1','title','sha',3,'final')"), params)
-        for passage_id in ("a", "b", "c"):
+        connection.execute(text("INSERT INTO source_document (tenant_id,project_id,source_id,source_version,title,source_sha256,expected_passage_count,status) VALUES (:tenant,:project,'source','v1','title','sha',4,'final')"), params)
+        for passage_id in ("a", "b", "c", "d"):
             connection.execute(text("INSERT INTO source_passage (tenant_id,project_id,source_id,source_version,passage_id,text,text_sha256) VALUES (:tenant,:project,'source','v1',:passage_id,:body,:sha)"), {**params, "passage_id": passage_id, "body": f"original {passage_id}", "sha": f"sha-{passage_id}"})
             connection.execute(text("INSERT INTO passage_processing (tenant_id,project_id,source_id,source_version,passage_id,state,reason) VALUES (:tenant,:project,'source','v1',:passage_id,'structural_only','none')"), {**params, "passage_id": passage_id})
         connection.execute(text("INSERT INTO source_head (tenant_id,project_id,source_id,source_version) VALUES (:tenant,:project,'source','v1')"), params)
@@ -69,7 +147,7 @@ def test_graph_retrieval_selects_edge_evidence_outside_vector_hits(db_engine, mo
         connection.execute(text("INSERT INTO assertion (tenant_id,project_id,assertion_id,source_id,source_version,passage_id,extraction_run_id,claim,chronology_state,review_state,original_quote) VALUES (:tenant,:project,:assertion_id,'source','v1','a',:run_id,'claim','reported','unreviewed','original a')"), params)
         connection.execute(text("INSERT INTO kg_node (tenant_id,project_id,node_id,node_type,attributes) VALUES (:tenant,:project,:assertion_id,'Assertion','{}'),(:tenant,:project,:product_id,'Product','{}')"), params)
         connection.execute(text("INSERT INTO kg_edge (tenant_id,project_id,edge_id,edge_type,source_node_id,target_node_id,assertion_id,is_evidence,attributes) VALUES (:tenant,:project,:edge_id,'applies_to',:assertion_id,:product_id,:assertion_id,true,'{}')"), params)
-        connection.execute(text("INSERT INTO kg_node_source_ref (tenant_id,project_id,node_id,source_id,source_version,passage_id) VALUES (:tenant,:project,:assertion_id,'source','v1','a'),(:tenant,:project,:product_id,'source','v1','b')"), params)
+        connection.execute(text("INSERT INTO kg_node_source_ref (tenant_id,project_id,node_id,source_id,source_version,passage_id) VALUES (:tenant,:project,:assertion_id,'source','v1','a'),(:tenant,:project,:product_id,'source','v1','d')"), params)
         connection.execute(text("INSERT INTO kg_edge_source_ref (tenant_id,project_id,edge_id,source_id,source_version,passage_id) VALUES (:tenant,:project,:edge_id,'source','v1','b')"), params)
         connection.execute(text("INSERT INTO kg_node (tenant_id,project_id,node_id,node_type,attributes) VALUES (:tenant,:project,:structural_product_id,'Product','{}')"), params)
         connection.execute(text("INSERT INTO kg_edge (tenant_id,project_id,edge_id,edge_type,source_node_id,target_node_id,assertion_id,is_evidence,attributes) VALUES (:tenant,:project,:structural_edge_id,'applies_to',:assertion_id,:structural_product_id,NULL,false,'{}')"), params)
@@ -108,6 +186,14 @@ def test_graph_retrieval_selects_edge_evidence_outside_vector_hits(db_engine, mo
     assert selected["b"].hop == 1
     assert selected["b"].via_edge_id == edge_id
     assert selected["b"].text == "original b"
+    with db_engine.connect() as connection:
+        assert connection.execute(text("""SELECT count(*) FROM kg_node_source_ref AS ref
+            JOIN kg_node AS node ON (node.tenant_id,node.project_id,node.node_id)=
+              (ref.tenant_id,ref.project_id,ref.node_id)
+            WHERE ref.tenant_id=:tenant AND ref.project_id=:project
+              AND ref.source_id='source' AND ref.source_version='v1' AND ref.passage_id='b'
+              AND node.node_type NOT IN ('SourceDocument','SourcePassage')"""), params).scalar_one() == 0
+    assert selected["d"].via_edge_id == edge_id
     assert all(candidate.text != "other project private text" for candidate in graph.candidates)
     assert selected["b"].source_metadata["title"] == "title"
     assert selected["a"].hop == 0 and selected["a"].via_node_id == assertion_id
@@ -120,6 +206,12 @@ def test_graph_retrieval_selects_edge_evidence_outside_vector_hits(db_engine, mo
     assert graph.diagnostics["config"] == config.as_dict()
     assert graph.diagnostics["entities_visited_per_hop"] == [1, 1]
     assert graph.diagnostics["expansions"][0]["relations_kept"] == 1
+
+    permissive = retrieval.retrieve(db_engine, scope, "question", "graph", client,
+                                    index.index_version,
+                                    replace(config, evidence_edges_only=False))
+    assert structural_product_id in permissive.node_ids
+    assert "c" not in {candidate.passage_id for candidate in permissive.candidates}
 
     original_binding = retrieval._active_graph_binding
     binding_reads = 0

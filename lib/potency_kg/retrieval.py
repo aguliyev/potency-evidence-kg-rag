@@ -297,8 +297,9 @@ def _beam_candidates(
         if rank < 10**9:
             seed_order.append((rank, node_id))
     seeds = tuple(node_id for _, node_id in sorted(seed_order)[:config.max_seeds])
-    # Frontier value: hop, reaching edge, path IDs, hub involvement, edge type.
-    frontier = [(node_id, 0, None, (node_id,), False, None) for node_id in seeds]
+    # Frontier value: hop, reaching edge, path IDs, hub involvement, edge type,
+    # and whether every traversed relation carries evidence.
+    frontier = [(node_id, 0, None, (node_id,), False, None, True) for node_id in seeds]
     visited = set(seeds)
     visited_order: list[str] = []
     traversed_edges: list[str] = []
@@ -322,29 +323,40 @@ def _beam_candidates(
 
     for hop in range(config.max_hops + 1):
         hop_counts.append(len(frontier))
-        next_options: list[tuple[float, str, str, tuple[str, ...], bool, str]] = []
-        for node_id, _, via_edge, path, hub, edge_type in frontier:
+        next_options: list[tuple[float, str, str, tuple[str, ...], bool, str, bool]] = []
+        for node_id, _, via_edge, path, hub, edge_type, evidence_path in frontier:
             visited_order.append(node_id)
             if hub:
                 hub_paths += 1
-            for ref in sorted(node_refs.get(node_id, ()), key=lambda ref: -float(ref["cosine"]))[:config.passages_per_entity]:
-                add_ref(ref, node_id, hop, via_edge, path, hub, edge_type)
-            if via_edge in evidence_edge_ids:
-                for ref in edge_refs.get(via_edge, ()):
+            if evidence_path:
+                for ref in sorted(node_refs.get(node_id, ()), key=lambda ref: -float(ref["cosine"]))[:config.passages_per_entity]:
                     add_ref(ref, node_id, hop, via_edge, path, hub, edge_type)
+                if via_edge in evidence_edge_ids:
+                    for ref in edge_refs.get(via_edge, ()):
+                        add_ref(ref, node_id, hop, via_edge, path, hub, edge_type)
             if hop == config.max_hops:
                 continue
             available = adjacency.get(node_id, ())
             if node_id in hubs and not config.expand_hubs:
                 expansion.append({"hop": hop, "entity_id": node_id, "relations_available": projected_relations[node_id], "relations_kept": 0, "hub": True})
                 continue
-            ranked: list[tuple[float, str, str, tuple[str, ...], bool, str]] = []
+            ranked_by_neighbor: dict[str, tuple[float, str, str, tuple[str, ...], bool, str, bool]] = {}
             for neighbor, edge in available:
                 if neighbor in visited or not node_refs.get(neighbor):
                     continue
                 best_cosine = max(float(ref["cosine"]) for ref in node_refs[neighbor])
                 score = config.graph_score(best_cosine, hop + 1, str(edge["edge_type"]))
-                ranked.append((score, neighbor, str(edge["edge_id"]), path + (str(edge["edge_id"]), neighbor), hub or neighbor in hubs, str(edge["edge_type"])))
+                edge_id = str(edge["edge_id"])
+                option = (score, neighbor, edge_id, path + (edge_id, neighbor),
+                          hub or neighbor in hubs, str(edge["edge_type"]),
+                          evidence_path and bool(edge["is_evidence"]))
+                previous = ranked_by_neighbor.get(neighbor)
+                if (previous is None or option[6] > previous[6]
+                        or (option[6] == previous[6]
+                            and (score > previous[0]
+                                 or (score == previous[0] and edge_id < previous[2])))):
+                    ranked_by_neighbor[neighbor] = option
+            ranked = list(ranked_by_neighbor.values())
             ranked.sort(key=lambda item: (-item[0], item[1], item[2]))
             kept = ranked[:config.neighbors_per_entity]
             expansion.append({"hop": hop, "entity_id": node_id,
@@ -354,12 +366,12 @@ def _beam_candidates(
             next_options.extend(kept)
         next_options.sort(key=lambda item: (-item[0], item[1], item[2]))
         frontier = []
-        for score, neighbor, edge_id, path, hub, edge_type in next_options:
+        for score, neighbor, edge_id, path, hub, edge_type, evidence_path in next_options:
             if neighbor in visited:
                 continue
             visited.add(neighbor)
             traversed_edges.append(edge_id)
-            frontier.append((neighbor, hop + 1, edge_id, path, hub, edge_type))
+            frontier.append((neighbor, hop + 1, edge_id, path, hub, edge_type, evidence_path))
             if len(frontier) >= config.frontier_cap_per_hop:
                 break
         if not frontier:
