@@ -45,6 +45,10 @@ class GenerationProtocolError(RuntimeError):
     """The provider or Instructor response was unusable."""
 
 
+class GenerationSchemaError(GenerationProtocolError):
+    """A response failed the requested structured schema."""
+
+
 class GenerationUnselectedTypeError(GenerationProtocolError):
     """A parseable response used an entity type outside the selected bundles."""
 
@@ -183,7 +187,7 @@ class InstructorExtractionClient:
                     raise GenerationUnselectedTypeError(
                         "generation response used a type outside selected bundles"
                     ) from None
-                raise GenerationProtocolError("generation response failed schema validation") from None
+                raise GenerationSchemaError("generation response failed schema validation") from None
             except Exception as error:
                 logger.warning("generation request failed: attempt=%d error=%s elapsed=%.1fs",
                                attempts, type(error).__name__, monotonic() - attempt_started)
